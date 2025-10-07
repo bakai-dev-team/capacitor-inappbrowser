@@ -316,7 +316,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         Log.d("InAppBrowser", "Constructor - Permissions from options: " + (permissions != null ? Arrays.toString(permissions) : "null"));
     }
 
-    @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
+    @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface", "ClickableViewAccessibility"})
     public void presentWebView() {
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         setCancelable(true);
@@ -364,7 +364,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         this._webView = findViewById(R.id.browser_view);
         updateBackgroundColor(); // Apply background color after WebView creation
 
-        applyInsets();
+//        applyInsets();
 
         // Add JavaScript interface
         _webView.addJavascriptInterface(new JavaScriptInterface(), "mobileApp");
@@ -394,44 +394,121 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         setWebViewClient();
 
         _webView.setWebChromeClient(new MyWebChromeClient());
-        // ↓ добавить в WebViewDialog в метод presentWebView(), после setWebChromeClient(...)
-        gestureDetector = new android.view.GestureDetector(
-                _context,
-                new android.view.GestureDetector.SimpleOnGestureListener() {
-                    private static final int SWIPE_THRESHOLD = 120;      // px
-                    private static final int SWIPE_VELOCITY_THRESHOLD = 200; // px/s
 
-                    @Override
-                    public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2, float velocityX, float velocityY) {
-                        if (e1 == null || e2 == null) return false;
-                        float diffX = e2.getX() - e1.getX();
-                        float diffY = e2.getY() - e1.getY();
 
-                        if (Math.abs(diffX) > Math.abs(diffY)
-                                && Math.abs(diffX) > SWIPE_THRESHOLD
-                                && Math.abs(velocityX) > SWIPE_VELOCITY_THRESHOLD) {
+// ---- EDGE SWIPE без убийства скроллов ----
+      final float density = _context.getResources().getDisplayMetrics().density;
+      final int EDGE_SLOP_PX = (int) (24 * density);
+      final int SWIPE_THRESHOLD = (int) (120 * density);
+      final int SWIPE_VELOCITY_THRESHOLD = (int) (200 * density);
 
-                            if (diffX > 0) {
-                                // свайп СЛЕВА -> НАПРАВО (right swipe) => "назад"
-                                if (_webView != null && _webView.canGoBack()) {
-                                    _webView.goBack();
-                                }
-                            } else {
-                                // свайп СПРАВА -> НАЛЕВО (left swipe) => "вперёд"
-                                if (_webView != null && _webView.canGoForward()) {
-                                    _webView.goForward();
-                                }
-                            }
-                            return true; // событие обработано
-                        }
-                        return false;
-                    }
+// служебные флаги для onTouch
+      final boolean[] edgeSwipeArmed = { false };
+      final boolean[] consumedEdgeSwipe = { false };
+      final float[] startX = { 0f }, startY = { 0f };
+
+      gestureDetector = new android.view.GestureDetector(
+              _context,
+              new android.view.GestureDetector.SimpleOnGestureListener() {
+                @Override
+                public boolean onDown(android.view.MotionEvent e) {
+                  // нужно true, чтобы пришёл onFling
+                  return true;
                 }
-        );
 
-// важно: отдаём событие детектору; если он не сработал — пусть WebView сам обрабатывает скролл
-        _webView.setOnTouchListener((v, event) -> gestureDetector.onTouchEvent(event));
+                @Override
+                public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2,
+                                       float velocityX, float velocityY) {
+                  if (_webView == null || e1 == null || e2 == null) return false;
+                  if (!edgeSwipeArmed[0]) return false; // только если стартовали у края
+                  if (e1.getPointerCount() > 1 || e2.getPointerCount() > 1) return false;
 
+                  float diffX = e2.getX() - e1.getX();
+                  float diffY = e2.getY() - e1.getY();
+
+                  // горизонтальная доминанта и пороги
+                  if (Math.abs(diffX) <= Math.abs(diffY)) return false;
+                  if (Math.abs(diffX) < SWIPE_THRESHOLD) return false;
+                  if (Math.abs(velocityX) < SWIPE_VELOCITY_THRESHOLD) return false;
+
+                  int w = _webView.getWidth();
+                  boolean fromLeftEdge  = e1.getX() <= EDGE_SLOP_PX;
+                  boolean fromRightEdge = e1.getX() >= (w - EDGE_SLOP_PX);
+
+                  if (diffX > 0) {
+                    // вправо (назад)
+                    if (!fromLeftEdge) return false;
+                    // если контент может скроллиться влево — не перехватываем
+                    if (_webView.canScrollHorizontally(-1)) return false;
+
+                    if (_webView.canGoBack()) {
+                      _webView.goBack();
+                      consumedEdgeSwipe[0] = true;
+                      return true; // жест обработан
+                    }
+                    return false;
+                  } else {
+                    // влево (вперёд)
+                    if (!fromRightEdge) return false;
+                    // если контент может скроллиться вправо — не перехватываем
+                    if (_webView.canScrollHorizontally(1)) return false;
+
+                    if (_webView.canGoForward()) {
+                      _webView.goForward();
+                      consumedEdgeSwipe[0] = true;
+                      return true; // жест обработан
+                    }
+                    return false;
+                  }
+                }
+              }
+      );
+
+// крайне важно: отдаём события WebView (false), кроме момента, когда САМИ перехватили edge-swipe
+      _webView.setOnTouchListener((v, event) -> {
+        switch (event.getActionMasked()) {
+          case android.view.MotionEvent.ACTION_DOWN: {
+            consumedEdgeSwipe[0] = false;
+            startX[0] = event.getX();
+            startY[0] = event.getY();
+
+            int w = _webView.getWidth();
+            boolean leftEdge  = startX[0] <= EDGE_SLOP_PX;
+            boolean rightEdge = startX[0] >= (w - EDGE_SLOP_PX);
+            edgeSwipeArmed[0] = leftEdge || rightEdge; // «вооружаемся» только у краёв
+            break;
+          }
+          case android.view.MotionEvent.ACTION_MOVE: {
+            if (edgeSwipeArmed[0]) {
+              float dx = event.getX() - startX[0];
+              // если пользователь реально пытается скроллить страницу — разоружаем жест
+              if ((dx > 0 && _webView.canScrollHorizontally(-1)) ||
+                      (dx < 0 && _webView.canScrollHorizontally(1))) {
+                edgeSwipeArmed[0] = false;
+              }
+            }
+            break;
+          }
+          case android.view.MotionEvent.ACTION_CANCEL:
+          case android.view.MotionEvent.ACTION_UP: {
+            // вернём true только если именно мы обработали edge-swipe
+            boolean consumed = consumedEdgeSwipe[0];
+            edgeSwipeArmed[0] = false;
+            consumedEdgeSwipe[0] = false;
+            // если consumed == true, «съедим» UP-событие; иначе пустим в WebView
+            if (consumed) return true;
+            break;
+          }
+        }
+
+        // всё равно прокидываем в жест-детектор (он выставит consumedEdgeSwipe при onFling)
+        gestureDetector.onTouchEvent(event);
+
+        // по умолчанию НЕ перехватываем — WebView продолжит обрабатывать скроллы/зум/клики
+        return consumedEdgeSwipe[0];
+      });
+
+      
 
         // Load URL and headers
         Map<String, String> requestHeaders = new HashMap<>();
