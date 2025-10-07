@@ -157,8 +157,11 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     private int mOriginalOrientation;
 
     public static final int CAMERA_PERMISSION_REQUEST_CODE = 1001;
+    public static final int LOCATION_PERMISSION_REQUEST_CODE = 1002;
+    private boolean geoPreflightRequested = false;
 
-    // Add JavaScript interface for close method
+
+  // Add JavaScript interface for close method
     private class JavaScriptInterface {
         @JavascriptInterface
         public void close() {
@@ -385,8 +388,10 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         webSettings.setMediaPlaybackRequiresUserGesture(false);
         webSettings.setSupportMultipleWindows(true);
         webSettings.setGeolocationEnabled(true);
+        webSettings.setGeolocationDatabasePath(activity.getFilesDir().getAbsolutePath());
 
-        if (_options.getTextZoom() > 0) {
+
+      if (_options.getTextZoom() > 0) {
             webSettings.setTextZoom(_options.getTextZoom());
         }
 
@@ -508,9 +513,29 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         return consumedEdgeSwipe[0];
       });
 
-      
 
-        // Load URL and headers
+      // === GEO PREFLIGHT ===
+      if (activity != null && !geoPreflightRequested) {
+        geoPreflightRequested = true;
+        boolean fineGranted =
+                ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED;
+        boolean coarseGranted =
+                ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_COARSE_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED;
+
+        if (!fineGranted && !coarseGranted) {
+          ActivityCompat.requestPermissions(
+                  activity,
+                  new String[]{ Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION },
+                  LOCATION_PERMISSION_REQUEST_CODE
+          );
+        }
+      }
+
+
+
+      // Load URL and headers
         Map<String, String> requestHeaders = new HashMap<>();
         if (_options.getHeaders() != null) {
             Iterator<String> keys = _options.getHeaders().keys();
@@ -661,7 +686,38 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         Log.d("InAppBrowser", "Web Share API polyfill injected");
     }
 
-    private void initializeSharePolyfill() {
+  private void injectFastGeoPermissionShim() {
+    if (_webView == null) return;
+    String script = """
+    (function () {
+      try {
+        // Если есть Permissions API
+        if (navigator.permissions && navigator.permissions.query) {
+          const origQuery = navigator.permissions.query.bind(navigator.permissions);
+          navigator.permissions.query = function(desc) {
+            try {
+              if (desc && (desc.name === 'geolocation' || desc === 'geolocation')) {
+                // моментальный ответ: уже "granted"
+                return Promise.resolve({ state: 'granted', onchange: null });
+              }
+            } catch (e) {}
+            return origQuery(desc);
+          };
+        }
+        // Дополнительно «пробуждаем» geolocation, чтобы последующие вызовы были ещё быстрее
+        if (navigator.geolocation && navigator.geolocation.getCurrentPosition) {
+          navigator.geolocation.getCurrentPosition(
+            function(){}, function(){},
+            { enableHighAccuracy: false, timeout: 0, maximumAge: 2147483647 }
+          );
+        }
+      } catch (e) { console.error('Geo shim error', e); }
+    })();
+    """;
+    _webView.evaluateJavascript(script, null);
+  }
+
+  private void initializeSharePolyfill() {
         String initScript = """
                   (function() {
                     console.log('Web Share API polyfill initialization skipped');
@@ -1666,6 +1722,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
                 injectAndroidJavaScriptInterface();
+                injectFastGeoPermissionShim();
                 if (loadingSpinner != null) {
                     loadingSpinner.setVisibility(View.VISIBLE);
                     loadingSpinner.bringToFront();
@@ -2088,12 +2145,18 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
     private class MyWebChromeClient extends WebChromeClient {
 
-        @Override
-        public void onGeolocationPermissionsShowPrompt(String origin, android.webkit.GeolocationPermissions.Callback callback) {
-            callback.invoke(origin, true, true);
-        }
+      @Override
+      public void onGeolocationPermissionsShowPrompt(
+              String origin,
+              android.webkit.GeolocationPermissions.Callback callback
+      ) {
+        // Раз приложение уже имеет ACCESS_*_LOCATION — сразу разрешаем сайту и запоминаем это.
+        callback.invoke(origin, true, /*retain*/ true);
+      }
 
-        @Override
+
+
+      @Override
         public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
             // создаём временный WebView, в который Android попытается загрузить popup-URL,
             // а мы всё перехватим и направим в основной _webView
@@ -2298,7 +2361,16 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                     currentPermissionRequest = null;
                 }
             }
+        } else if (requestCode == LOCATION_PERMISSION_REQUEST_CODE) {
+          boolean granted = false;
+          for (int r : grantResults) {
+            if (r == PackageManager.PERMISSION_GRANTED) { granted = true; break; }
+          }
+          Log.d("InAppBrowser", "Location permission " + (granted ? "granted" : "denied"));
+          // Ничего не ждём и не вызываем pending callback — мы уже ответили сайту сразу.
+          // По желанию: можно сделать _webView.reload(); если бизнес-логика сайта этого требует.
         }
+
     }
 
     private void setupLoadingSpinner() {
