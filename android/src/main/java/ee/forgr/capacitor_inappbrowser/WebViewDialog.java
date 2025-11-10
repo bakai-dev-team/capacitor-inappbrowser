@@ -1,5 +1,6 @@
 package ee.forgr.capacitor_inappbrowser;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -8,6 +9,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
@@ -21,6 +23,9 @@ import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
 import android.provider.MediaStore;
 import android.text.TextUtils;
 import android.util.Base64;
@@ -40,18 +45,26 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.webkit.WebSettings;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
+import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.Toolbar;
 import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
+import androidx.constraintlayout.widget.ConstraintLayout;
+import androidx.constraintlayout.widget.ConstraintSet;
+import androidx.core.app.ActivityCompat;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -75,6 +88,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -84,22 +98,6 @@ import java.util.regex.Pattern;
 
 import org.json.JSONException;
 import org.json.JSONObject;
-import androidx.activity.result.ActivityResultLauncher;
-import android.os.Handler;
-import android.os.Looper;
-import android.widget.RelativeLayout;
-import android.Manifest;
-import android.content.pm.PackageManager;
-import androidx.core.app.ActivityCompat;
-import androidx.annotation.NonNull;
-
-import java.util.concurrent.ConcurrentHashMap;
-
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-import androidx.constraintlayout.widget.ConstraintLayout;
-import androidx.constraintlayout.widget.ConstraintSet;
-import android.os.Message;
 
 public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPermissionsResultCallback {
 
@@ -127,10 +125,8 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     private boolean datePickerInjected = false; // Track if we've injected date picker fixes
     private boolean cameraAlertShown = false; // Track if camera alert has been shown
     private final WebView capacitorWebView;
-    private final Map<String, ProxiedRequest> proxiedRequestsHashmap =
-            new ConcurrentHashMap<>();
-    private final ExecutorService executorService =
-            Executors.newCachedThreadPool();
+    private final Map<String, ProxiedRequest> proxiedRequestsHashmap = new ConcurrentHashMap<>();
+    private final ExecutorService executorService = Executors.newCachedThreadPool();
     private int iconColor = Color.BLACK; // Default icon color
     private ProgressBar loadingSpinner; // Add spinner property
     private String backgroundColor = "white"; // Default background color
@@ -160,9 +156,9 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     public static final int LOCATION_PERMISSION_REQUEST_CODE = 1002;
     private boolean geoPreflightRequested = false;
 
-
-  // Add JavaScript interface for close method
+    // Add JavaScript interface for close method
     private class JavaScriptInterface {
+
         @JavascriptInterface
         public void close() {
             if (activity != null) {
@@ -175,13 +171,27 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
         @JavascriptInterface
         public void share(String title, String text, String url, String fileData, String fileName, String fileType) {
-            Log.d("InAppBrowser", "Native share method called with params: " +
-                    "title=" + title + ", " +
-                    "text=" + text + ", " +
-                    "url=" + url + ", " +
-                    "fileData=" + (fileData != null ? "present" : "null") + ", " +
-                    "fileName=" + fileName + ", " +
-                    "fileType=" + fileType);
+            Log.d(
+                    "InAppBrowser",
+                    "Native share method called with params: " +
+                            "title=" +
+                            title +
+                            ", " +
+                            "text=" +
+                            text +
+                            ", " +
+                            "url=" +
+                            url +
+                            ", " +
+                            "fileData=" +
+                            (fileData != null ? "present" : "null") +
+                            ", " +
+                            "fileName=" +
+                            fileName +
+                            ", " +
+                            "fileType=" +
+                            fileType
+            );
 
             if (activity == null) {
                 Log.e("InAppBrowser", "Activity is null, cannot share");
@@ -208,11 +218,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                             fos.close();
 
                             // Get content URI
-                            Uri fileUri = FileProvider.getUriForFile(
-                                    activity,
-                                    activity.getPackageName() + ".fileprovider",
-                                    tempFile
-                            );
+                            Uri fileUri = FileProvider.getUriForFile(activity, activity.getPackageName() + ".fileprovider", tempFile);
 
                             // Set up share intent for file
                             shareIntent.setType(fileType);
@@ -267,6 +273,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     }
 
     private class ClipboardBridge {
+
         private final android.content.ClipboardManager cm;
 
         ClipboardBridge(Context ctx) {
@@ -289,7 +296,6 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             return cs == null ? "" : cs.toString();
         }
     }
-
 
     public WebViewDialog(
             Context context,
@@ -323,10 +329,9 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     public void presentWebView() {
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         setCancelable(true);
-        Objects.requireNonNull(getWindow()).setFlags(
-                WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                WindowManager.LayoutParams.FLAG_FULLSCREEN
-        );
+        Objects
+                .requireNonNull(getWindow())
+                .setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         setContentView(R.layout.activity_browser);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
@@ -367,12 +372,11 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         this._webView = findViewById(R.id.browser_view);
         updateBackgroundColor(); // Apply background color after WebView creation
 
-//        applyInsets();
+        //        applyInsets();
 
         // Add JavaScript interface
         _webView.addJavascriptInterface(new JavaScriptInterface(), "mobileApp");
         _webView.addJavascriptInterface(new ClipboardBridge(_context), "ClipboardBridge");
-
 
         // WebView settings
         WebSettings webSettings = _webView.getSettings();
@@ -390,8 +394,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         webSettings.setGeolocationEnabled(true);
         webSettings.setGeolocationDatabasePath(activity.getFilesDir().getAbsolutePath());
 
-
-      if (_options.getTextZoom() > 0) {
+        if (_options.getTextZoom() > 0) {
             webSettings.setTextZoom(_options.getTextZoom());
         }
 
@@ -400,142 +403,136 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
         _webView.setWebChromeClient(new MyWebChromeClient());
 
+        // ---- EDGE SWIPE без убийства скроллов ----
+        final float density = _context.getResources().getDisplayMetrics().density;
+        final int EDGE_SLOP_PX = (int) (24 * density);
+        final int SWIPE_THRESHOLD = (int) (120 * density);
+        final int SWIPE_VELOCITY_THRESHOLD = (int) (200 * density);
 
-// ---- EDGE SWIPE без убийства скроллов ----
-      final float density = _context.getResources().getDisplayMetrics().density;
-      final int EDGE_SLOP_PX = (int) (24 * density);
-      final int SWIPE_THRESHOLD = (int) (120 * density);
-      final int SWIPE_VELOCITY_THRESHOLD = (int) (200 * density);
+        // служебные флаги для onTouch
+        final boolean[] edgeSwipeArmed = {false};
+        final boolean[] consumedEdgeSwipe = {false};
+        final float[] startX = {0f}, startY = {0f};
 
-// служебные флаги для onTouch
-      final boolean[] edgeSwipeArmed = { false };
-      final boolean[] consumedEdgeSwipe = { false };
-      final float[] startX = { 0f }, startY = { 0f };
+        gestureDetector =
+                new android.view.GestureDetector(
+                        _context,
+                        new android.view.GestureDetector.SimpleOnGestureListener() {
+                            @Override
+                            public boolean onDown(android.view.MotionEvent e) {
+                                // нужно true, чтобы пришёл onFling
+                                return true;
+                            }
 
-      gestureDetector = new android.view.GestureDetector(
-              _context,
-              new android.view.GestureDetector.SimpleOnGestureListener() {
-                @Override
-                public boolean onDown(android.view.MotionEvent e) {
-                  // нужно true, чтобы пришёл onFling
-                  return true;
+                            @Override
+                            public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2, float velocityX, float velocityY) {
+                                if (_webView == null || e1 == null || e2 == null) return false;
+                                if (!edgeSwipeArmed[0]) return false; // только если стартовали у края
+                                if (e1.getPointerCount() > 1 || e2.getPointerCount() > 1) return false;
+
+                                float diffX = e2.getX() - e1.getX();
+                                float diffY = e2.getY() - e1.getY();
+
+                                // горизонтальная доминанта и пороги
+                                if (Math.abs(diffX) <= Math.abs(diffY)) return false;
+                                if (Math.abs(diffX) < SWIPE_THRESHOLD) return false;
+                                if (Math.abs(velocityX) < SWIPE_VELOCITY_THRESHOLD) return false;
+
+                                int w = _webView.getWidth();
+                                boolean fromLeftEdge = e1.getX() <= EDGE_SLOP_PX;
+                                boolean fromRightEdge = e1.getX() >= (w - EDGE_SLOP_PX);
+
+                                if (diffX > 0) {
+                                    // вправо (назад)
+                                    if (!fromLeftEdge) return false;
+                                    // если контент может скроллиться влево — не перехватываем
+                                    if (_webView.canScrollHorizontally(-1)) return false;
+
+                                    if (_webView.canGoBack()) {
+                                        _webView.goBack();
+                                        consumedEdgeSwipe[0] = true;
+                                        return true; // жест обработан
+                                    }
+                                    return false;
+                                } else {
+                                    // влево (вперёд)
+                                    if (!fromRightEdge) return false;
+                                    // если контент может скроллиться вправо — не перехватываем
+                                    if (_webView.canScrollHorizontally(1)) return false;
+
+                                    if (_webView.canGoForward()) {
+                                        _webView.goForward();
+                                        consumedEdgeSwipe[0] = true;
+                                        return true; // жест обработан
+                                    }
+                                    return false;
+                                }
+                            }
+                        }
+                );
+
+        // крайне важно: отдаём события WebView (false), кроме момента, когда САМИ перехватили edge-swipe
+        _webView.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN: {
+                    consumedEdgeSwipe[0] = false;
+                    startX[0] = event.getX();
+                    startY[0] = event.getY();
+
+                    int w = _webView.getWidth();
+                    boolean leftEdge = startX[0] <= EDGE_SLOP_PX;
+                    boolean rightEdge = startX[0] >= (w - EDGE_SLOP_PX);
+                    edgeSwipeArmed[0] = leftEdge || rightEdge; // «вооружаемся» только у краёв
+                    break;
                 }
-
-                @Override
-                public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2,
-                                       float velocityX, float velocityY) {
-                  if (_webView == null || e1 == null || e2 == null) return false;
-                  if (!edgeSwipeArmed[0]) return false; // только если стартовали у края
-                  if (e1.getPointerCount() > 1 || e2.getPointerCount() > 1) return false;
-
-                  float diffX = e2.getX() - e1.getX();
-                  float diffY = e2.getY() - e1.getY();
-
-                  // горизонтальная доминанта и пороги
-                  if (Math.abs(diffX) <= Math.abs(diffY)) return false;
-                  if (Math.abs(diffX) < SWIPE_THRESHOLD) return false;
-                  if (Math.abs(velocityX) < SWIPE_VELOCITY_THRESHOLD) return false;
-
-                  int w = _webView.getWidth();
-                  boolean fromLeftEdge  = e1.getX() <= EDGE_SLOP_PX;
-                  boolean fromRightEdge = e1.getX() >= (w - EDGE_SLOP_PX);
-
-                  if (diffX > 0) {
-                    // вправо (назад)
-                    if (!fromLeftEdge) return false;
-                    // если контент может скроллиться влево — не перехватываем
-                    if (_webView.canScrollHorizontally(-1)) return false;
-
-                    if (_webView.canGoBack()) {
-                      _webView.goBack();
-                      consumedEdgeSwipe[0] = true;
-                      return true; // жест обработан
+                case android.view.MotionEvent.ACTION_MOVE: {
+                    if (edgeSwipeArmed[0]) {
+                        float dx = event.getX() - startX[0];
+                        // если пользователь реально пытается скроллить страницу — разоружаем жест
+                        if ((dx > 0 && _webView.canScrollHorizontally(-1)) || (dx < 0 && _webView.canScrollHorizontally(1))) {
+                            edgeSwipeArmed[0] = false;
+                        }
                     }
-                    return false;
-                  } else {
-                    // влево (вперёд)
-                    if (!fromRightEdge) return false;
-                    // если контент может скроллиться вправо — не перехватываем
-                    if (_webView.canScrollHorizontally(1)) return false;
-
-                    if (_webView.canGoForward()) {
-                      _webView.goForward();
-                      consumedEdgeSwipe[0] = true;
-                      return true; // жест обработан
-                    }
-                    return false;
-                  }
+                    break;
                 }
-              }
-      );
-
-// крайне важно: отдаём события WebView (false), кроме момента, когда САМИ перехватили edge-swipe
-      _webView.setOnTouchListener((v, event) -> {
-        switch (event.getActionMasked()) {
-          case android.view.MotionEvent.ACTION_DOWN: {
-            consumedEdgeSwipe[0] = false;
-            startX[0] = event.getX();
-            startY[0] = event.getY();
-
-            int w = _webView.getWidth();
-            boolean leftEdge  = startX[0] <= EDGE_SLOP_PX;
-            boolean rightEdge = startX[0] >= (w - EDGE_SLOP_PX);
-            edgeSwipeArmed[0] = leftEdge || rightEdge; // «вооружаемся» только у краёв
-            break;
-          }
-          case android.view.MotionEvent.ACTION_MOVE: {
-            if (edgeSwipeArmed[0]) {
-              float dx = event.getX() - startX[0];
-              // если пользователь реально пытается скроллить страницу — разоружаем жест
-              if ((dx > 0 && _webView.canScrollHorizontally(-1)) ||
-                      (dx < 0 && _webView.canScrollHorizontally(1))) {
-                edgeSwipeArmed[0] = false;
-              }
+                case android.view.MotionEvent.ACTION_CANCEL:
+                case android.view.MotionEvent.ACTION_UP: {
+                    // вернём true только если именно мы обработали edge-swipe
+                    boolean consumed = consumedEdgeSwipe[0];
+                    edgeSwipeArmed[0] = false;
+                    consumedEdgeSwipe[0] = false;
+                    // если consumed == true, «съедим» UP-событие; иначе пустим в WebView
+                    if (consumed) return true;
+                    break;
+                }
             }
-            break;
-          }
-          case android.view.MotionEvent.ACTION_CANCEL:
-          case android.view.MotionEvent.ACTION_UP: {
-            // вернём true только если именно мы обработали edge-swipe
-            boolean consumed = consumedEdgeSwipe[0];
-            edgeSwipeArmed[0] = false;
-            consumedEdgeSwipe[0] = false;
-            // если consumed == true, «съедим» UP-событие; иначе пустим в WebView
-            if (consumed) return true;
-            break;
-          }
+
+            // всё равно прокидываем в жест-детектор (он выставит consumedEdgeSwipe при onFling)
+            gestureDetector.onTouchEvent(event);
+
+            // по умолчанию НЕ перехватываем — WebView продолжит обрабатывать скроллы/зум/клики
+            return consumedEdgeSwipe[0];
+        });
+
+        // === GEO PREFLIGHT ===
+        if (activity != null && !geoPreflightRequested) {
+            geoPreflightRequested = true;
+            boolean fineGranted =
+                    ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            boolean coarseGranted =
+                    ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                            PackageManager.PERMISSION_GRANTED;
+
+            if (!fineGranted && !coarseGranted) {
+                ActivityCompat.requestPermissions(
+                        activity,
+                        new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION},
+                        LOCATION_PERMISSION_REQUEST_CODE
+                );
+            }
         }
 
-        // всё равно прокидываем в жест-детектор (он выставит consumedEdgeSwipe при onFling)
-        gestureDetector.onTouchEvent(event);
-
-        // по умолчанию НЕ перехватываем — WebView продолжит обрабатывать скроллы/зум/клики
-        return consumedEdgeSwipe[0];
-      });
-
-
-      // === GEO PREFLIGHT ===
-      if (activity != null && !geoPreflightRequested) {
-        geoPreflightRequested = true;
-        boolean fineGranted =
-                ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION)
-                        == PackageManager.PERMISSION_GRANTED;
-        boolean coarseGranted =
-                ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_COARSE_LOCATION)
-                        == PackageManager.PERMISSION_GRANTED;
-
-        if (!fineGranted && !coarseGranted) {
-          ActivityCompat.requestPermissions(
-                  activity,
-                  new String[]{ Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION },
-                  LOCATION_PERMISSION_REQUEST_CODE
-          );
-        }
-      }
-
-
-
-      // Load URL and headers
+        // Load URL and headers
         Map<String, String> requestHeaders = new HashMap<>();
         if (_options.getHeaders() != null) {
             Iterator<String> keys = _options.getHeaders().keys();
@@ -580,18 +577,21 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
         try {
             // 2) Прямые схемы
-            if (lower.startsWith("mailto:") || lower.startsWith("tel:") ||
-                    lower.startsWith("tg:") || lower.startsWith("whatsapp:")) {
-                Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            if (lower.startsWith("mailto:") || lower.startsWith("tel:") || lower.startsWith("tg:") || lower.startsWith("whatsapp:")) {
+                Intent i;
+                if (lower.startsWith("tel:")) {
+                    // Используем ACTION_DIAL, чтобы избежать необходимости в разрешении CALL_PHONE
+                    i = new Intent(Intent.ACTION_DIAL, Uri.parse(url));
+                } else {
+                    i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                }
                 activity.startActivity(i);
                 return true;
             }
 
             // 3) Универсальные https-лендинги месcенджеров
             boolean isMessengerUniversal =
-                    lower.startsWith("https://t.me/") ||
-                            lower.startsWith("https://wa.me/") ||
-                            lower.startsWith("https://api.whatsapp.com/");
+                    lower.startsWith("https://t.me/") || lower.startsWith("https://wa.me/") || lower.startsWith("https://api.whatsapp.com/");
 
             if (isMessengerUniversal) {
                 try {
@@ -619,8 +619,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                     }
                     String pkg = intent.getPackage();
                     if (!TextUtils.isEmpty(pkg)) {
-                        Intent market = new Intent(Intent.ACTION_VIEW,
-                                Uri.parse("market://details?id=" + pkg));
+                        Intent market = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + pkg));
                         activity.startActivity(market);
                         return true;
                     }
@@ -642,94 +641,100 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             return;
         }
 
-        String script = """
-                  if (!navigator.share) {
-                    navigator.share = async function(shareData) {
-                      return new Promise((resolve, reject) => {
-                        try {
-                          let title = shareData.title || '';
-                          let text = shareData.text || '';
-                          let url = shareData.url || '';
-                          let fileData = null;
-                          let fileName = '';
-                          let fileType = '';
-                
-                          if (shareData.files && shareData.files.length > 0) {
-                            const file = shareData.files[0];
-                            fileName = file.name;
-                            fileType = file.type;
-                
-                            // Convert File to base64
-                            const reader = new FileReader();
-                            reader.onload = function(e) {
-                              fileData = e.target.result.split(',')[1]; // Remove data URL prefix
-                              window.mobileApp.share(title, text, url, fileData, fileName, fileType);
-                              resolve();
+        String script =
+                """
+                          if (!navigator.share) {
+                            navigator.share = async function(shareData) {
+                              return new Promise((resolve, reject) => {
+                                try {
+                                  let title = shareData.title || '';
+                                  let text = shareData.text || '';
+                                  let url = shareData.url || '';
+                                  let fileData = null;
+                                  let fileName = '';
+                                  let fileType = '';
+                        
+                                  if (shareData.files && shareData.files.length > 0) {
+                                    const file = shareData.files[0];
+                                    fileName = file.name;
+                                    fileType = file.type;
+                        
+                                    // Convert File to base64
+                                    const reader = new FileReader();
+                                    reader.onload = function(e) {
+                                      fileData = e.target.result.split(',')[1]; // Remove data URL prefix
+                                      window.mobileApp.share(title, text, url, fileData, fileName, fileType);
+                                      resolve();
+                                    };
+                                    reader.onerror = function(e) {
+                                      reject(new Error('Failed to read file'));
+                                    };
+                                    reader.readAsDataURL(file);
+                                  } else {
+                                    window.mobileApp.share(title, text, url, null, null, null);
+                                    resolve();
+                                  }
+                                } catch (error) {
+                                  reject(error);
+                                }
+                              });
                             };
-                            reader.onerror = function(e) {
-                              reject(new Error('Failed to read file'));
-                            };
-                            reader.readAsDataURL(file);
-                          } else {
-                            window.mobileApp.share(title, text, url, null, null, null);
-                            resolve();
                           }
-                        } catch (error) {
-                          reject(error);
-                        }
-                      });
-                    };
-                  }
-                """;
+                        """;
 
         _webView.evaluateJavascript(script, null);
         Log.d("InAppBrowser", "Web Share API polyfill injected");
     }
 
-  private void injectFastGeoPermissionShim() {
-    if (_webView == null) return;
-    String script = """
-    (function () {
-      try {
-        // Если есть Permissions API
-        if (navigator.permissions && navigator.permissions.query) {
-          const origQuery = navigator.permissions.query.bind(navigator.permissions);
-          navigator.permissions.query = function(desc) {
-            try {
-              if (desc && (desc.name === 'geolocation' || desc === 'geolocation')) {
-                // моментальный ответ: уже "granted"
-                return Promise.resolve({ state: 'granted', onchange: null });
-              }
-            } catch (e) {}
-            return origQuery(desc);
-          };
-        }
-        // Дополнительно «пробуждаем» geolocation, чтобы последующие вызовы были ещё быстрее
-        if (navigator.geolocation && navigator.geolocation.getCurrentPosition) {
-          navigator.geolocation.getCurrentPosition(
-            function(){}, function(){},
-            { enableHighAccuracy: false, timeout: 0, maximumAge: 2147483647 }
-          );
-        }
-      } catch (e) { console.error('Geo shim error', e); }
-    })();
-    """;
-    _webView.evaluateJavascript(script, null);
-  }
+    private void injectFastGeoPermissionShim() {
+        if (_webView == null) return;
+        String script =
+                """
+                        (function () {
+                          try {
+                            // Если есть Permissions API
+                            if (navigator.permissions && navigator.permissions.query) {
+                              const origQuery = navigator.permissions.query.bind(navigator.permissions);
+                              navigator.permissions.query = function(desc) {
+                                try {
+                                  if (desc && (desc.name === 'geolocation' || desc === 'geolocation')) {
+                                    // моментальный ответ: уже "granted"
+                                    return Promise.resolve({ state: 'granted', onchange: null });
+                                  }
+                                } catch (e) {}
+                                return origQuery(desc);
+                              };
+                            }
+                            // Дополнительно «пробуждаем» geolocation, чтобы последующие вызовы были ещё быстрее
+                            if (navigator.geolocation && navigator.geolocation.getCurrentPosition) {
+                              navigator.geolocation.getCurrentPosition(
+                                function(){}, function(){},
+                                { enableHighAccuracy: false, timeout: 0, maximumAge: 2147483647 }
+                              );
+                            }
+                          } catch (e) { console.error('Geo shim error', e); }
+                        })();
+                        """;
+        _webView.evaluateJavascript(script, null);
+    }
 
-  private void initializeSharePolyfill() {
-        String initScript = """
-                  (function() {
-                    console.log('Web Share API polyfill initialization skipped');
-                  })();
-                """;
+    private void initializeSharePolyfill() {
+        String initScript =
+                """
+                          (function() {
+                            console.log('Web Share API polyfill initialization skipped');
+                          })();
+                        """;
 
-        _webView.evaluateJavascript(initScript, new ValueCallback<String>() {
-            @Override
-            public void onReceiveValue(String value) {
-                Log.d("InAppBrowser", "Web Share API polyfill initialization skipped");
-            }
-        });
+        _webView.evaluateJavascript(
+                initScript,
+                new ValueCallback<String>() {
+                    @Override
+                    public void onReceiveValue(String value) {
+                        Log.d("InAppBrowser", "Web Share API polyfill initialization skipped");
+                    }
+                }
+        );
     }
 
     /**
@@ -755,8 +760,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         if (isAndroid15Plus) {
             // Get AppBarLayout which contains the toolbar
             if (toolbarView != null && toolbarView.getParent() instanceof com.google.android.material.appbar.AppBarLayout) {
-                com.google.android.material.appbar.AppBarLayout appBarLayout =
-                        (com.google.android.material.appbar.AppBarLayout) toolbarView.getParent();
+                com.google.android.material.appbar.AppBarLayout appBarLayout = (com.google.android.material.appbar.AppBarLayout) toolbarView.getParent();
                 // Remove elevation to eliminate shadows (only on Android 15+)
                 appBarLayout.setElevation(0);
                 appBarLayout.setStateListAnimator(null);
@@ -781,19 +785,14 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 _webView.post(() -> {
                     // Get status bar height
                     int statusBarHeight = 0;
-                    int resourceId = getContext()
-                            .getResources()
-                            .getIdentifier("status_bar_height", "dimen", "android");
+                    int resourceId = getContext().getResources().getIdentifier("status_bar_height", "dimen", "android");
                     if (resourceId > 0) {
-                        statusBarHeight = getContext()
-                                .getResources()
-                                .getDimensionPixelSize(resourceId);
+                        statusBarHeight = getContext().getResources().getDimensionPixelSize(resourceId);
                     }
 
                     // Fix status bar view
                     if (statusBarColorView != null) {
-                        ViewGroup.LayoutParams params =
-                                statusBarColorView.getLayoutParams();
+                        ViewGroup.LayoutParams params = statusBarColorView.getLayoutParams();
                         params.height = statusBarHeight;
                         statusBarColorView.setLayoutParams(params);
                         statusBarColorView.setBackgroundColor(finalBgColor);
@@ -801,8 +800,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                     }
 
                     // Fix AppBarLayout position
-                    ViewGroup.MarginLayoutParams params =
-                            (ViewGroup.MarginLayoutParams) appBarLayout.getLayoutParams();
+                    ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) appBarLayout.getLayoutParams();
                     params.topMargin = statusBarHeight;
                     appBarLayout.setLayoutParams(params);
                     appBarLayout.setBackgroundColor(finalBgColor);
@@ -811,40 +809,38 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         }
 
         // Apply system insets to WebView (compatible with all Android versions)
-        ViewCompat.setOnApplyWindowInsetsListener(_webView, (v, windowInsets) -> {
-            Insets insets = windowInsets.getInsets(
-                    WindowInsetsCompat.Type.systemBars()
-            );
-            Boolean keyboardVisible = windowInsets.isVisible(
-                    WindowInsetsCompat.Type.ime()
-            );
+        ViewCompat.setOnApplyWindowInsetsListener(
+                _webView,
+                (v, windowInsets) -> {
+                    Insets insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());
+                    Boolean keyboardVisible = windowInsets.isVisible(WindowInsetsCompat.Type.ime());
 
-            ViewGroup.MarginLayoutParams mlp =
-                    (ViewGroup.MarginLayoutParams) v.getLayoutParams();
+                    ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) v.getLayoutParams();
 
-            // Apply margins based on Android version
-            if (isAndroid15Plus) {
-                // Android 15+ specific handling
-                if (keyboardVisible) {
-                    mlp.bottomMargin = 0;
-                } else {
-                    mlp.bottomMargin = insets.bottom;
+                    // Apply margins based on Android version
+                    if (isAndroid15Plus) {
+                        // Android 15+ specific handling
+                        if (keyboardVisible) {
+                            mlp.bottomMargin = 0;
+                        } else {
+                            mlp.bottomMargin = insets.bottom;
+                        }
+                        // On Android 15+, don't add top margin as it's handled by AppBarLayout
+                        mlp.topMargin = 0;
+                    } else {
+                        // Original behavior for older Android versions
+                        mlp.topMargin = insets.top;
+                        mlp.bottomMargin = insets.bottom;
+                    }
+
+                    // These stay the same for all Android versions
+                    mlp.leftMargin = insets.left;
+                    mlp.rightMargin = insets.right;
+                    v.setLayoutParams(mlp);
+
+                    return WindowInsetsCompat.CONSUMED;
                 }
-                // On Android 15+, don't add top margin as it's handled by AppBarLayout
-                mlp.topMargin = 0;
-            } else {
-                // Original behavior for older Android versions
-                mlp.topMargin = insets.top;
-                mlp.bottomMargin = insets.bottom;
-            }
-
-            // These stay the same for all Android versions
-            mlp.leftMargin = insets.left;
-            mlp.rightMargin = insets.right;
-            v.setLayoutParams(mlp);
-
-            return WindowInsetsCompat.CONSUMED;
-        });
+        );
 
         // Handle window decoration - version-specific window settings
         if (getWindow() != null) {
@@ -855,18 +851,11 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
                 // Set status bar text color
                 int backgroundColor;
-                if (
-                        _options.getToolbarColor() != null &&
-                                !_options.getToolbarColor().isEmpty()
-                ) {
+                if (_options.getToolbarColor() != null && !_options.getToolbarColor().isEmpty()) {
                     try {
                         backgroundColor = Color.parseColor(_options.getToolbarColor());
                         boolean isDarkBackground = isDarkColor(backgroundColor);
-                        WindowInsetsControllerCompat controller =
-                                new WindowInsetsControllerCompat(
-                                        getWindow(),
-                                        getWindow().getDecorView()
-                                );
+                        WindowInsetsControllerCompat controller = new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
                         controller.setAppearanceLightStatusBars(!isDarkBackground);
                     } catch (IllegalArgumentException e) {
                         // Ignore color parsing errors
@@ -874,17 +863,10 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 }
             } else if (Build.VERSION.SDK_INT >= 30) {
                 // Android 11-14: Use original behavior
-                WindowInsetsControllerCompat controller =
-                        new WindowInsetsControllerCompat(
-                                getWindow(),
-                                getWindow().getDecorView()
-                        );
+                WindowInsetsControllerCompat controller = new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
 
                 // Original behavior for status bar color
-                if (
-                        _options.getToolbarColor() != null &&
-                                !_options.getToolbarColor().isEmpty()
-                ) {
+                if (_options.getToolbarColor() != null && !_options.getToolbarColor().isEmpty()) {
                     try {
                         int toolbarColor = Color.parseColor(_options.getToolbarColor());
                         getWindow().setStatusBarColor(toolbarColor);
@@ -897,18 +879,10 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 }
             } else {
                 // Pre-Android 11: Original behavior with deprecated flags
-                getWindow()
-                        .getDecorView()
-                        .setSystemUiVisibility(
-                                View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-                                        View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        );
+                getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
 
                 // Apply original status bar color logic
-                if (
-                        _options.getToolbarColor() != null &&
-                                !_options.getToolbarColor().isEmpty()
-                ) {
+                if (_options.getToolbarColor() != null && !_options.getToolbarColor().isEmpty()) {
                     try {
                         int toolbarColor = Color.parseColor(_options.getToolbarColor());
                         getWindow().setStatusBarColor(toolbarColor);
@@ -926,16 +900,10 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 JSONObject jsonObject = new JSONObject();
                 jsonObject.put("detail", detail);
                 String jsonDetail = jsonObject.toString();
-                String script =
-                        "window.dispatchEvent(new CustomEvent('messageFromNative', " +
-                                jsonDetail +
-                                "));";
+                String script = "window.dispatchEvent(new CustomEvent('messageFromNative', " + jsonDetail + "));";
                 _webView.post(() -> _webView.evaluateJavascript(script, null));
             } catch (Exception e) {
-                Log.e(
-                        "postMessageToJS",
-                        "Error sending message to JS: " + e.getMessage()
-                );
+                Log.e("postMessageToJS", "Error sending message to JS: " + e.getMessage());
             }
         }
     }
@@ -955,10 +923,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                         "};\n" +
                         "preShowFunction().then(() => window.PreShowScriptInterface.success()).catch(err => { console.error('Pre show error', err); window.PreShowScriptInterface.error(JSON.stringify(err, Object.getOwnPropertyNames(err))) })";
 
-        Log.i(
-                "InjectPreShowScript",
-                String.format("PreShowScript script:\n%s", script)
-        );
+        Log.i("InjectPreShowScript", String.format("PreShowScript script:\n%s", script));
 
         preShowSemaphore = new Semaphore(0);
         activity.runOnUiThread(
@@ -972,23 +937,14 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
         try {
             if (!preShowSemaphore.tryAcquire(10, TimeUnit.SECONDS)) {
-                Log.e(
-                        "InjectPreShowScript",
-                        "PreShowScript running for over 10 seconds. The plugin will not wait any longer!"
-                );
+                Log.e("InjectPreShowScript", "PreShowScript running for over 10 seconds. The plugin will not wait any longer!");
                 return;
             }
             if (preShowError != null && !preShowError.isEmpty()) {
-                Log.e(
-                        "InjectPreShowScript",
-                        "Error within the user-provided preShowFunction: " + preShowError
-                );
+                Log.e("InjectPreShowScript", "Error within the user-provided preShowFunction: " + preShowError);
             }
         } catch (InterruptedException e) {
-            Log.e(
-                    "InjectPreShowScript",
-                    "Error when calling InjectPreShowScript: " + e.getMessage()
-            );
+            Log.e("InjectPreShowScript", "Error when calling InjectPreShowScript: " + e.getMessage());
         } finally {
             preShowSemaphore = null;
             preShowError = null;
@@ -1075,9 +1031,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             while (keys.hasNext()) {
                 String key = keys.next();
                 if (TextUtils.equals(key.toLowerCase(), "user-agent")) {
-                    _webView
-                            .getSettings()
-                            .setUserAgentString(_options.getHeaders().getString(key));
+                    _webView.getSettings().setUserAgentString(_options.getHeaders().getString(key));
                 } else {
                     requestHeaders.put(key, _options.getHeaders().getString(key));
                 }
@@ -1099,10 +1053,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         _toolbar = findViewById(R.id.tool_bar);
 
         // Apply toolbar color early, for ALL toolbar types, before any view configuration
-        if (
-                _options.getToolbarColor() != null &&
-                        !_options.getToolbarColor().isEmpty()
-        ) {
+        if (_options.getToolbarColor() != null && !_options.getToolbarColor().isEmpty()) {
             try {
                 int toolbarColor = Color.parseColor(_options.getToolbarColor());
                 _toolbar.setBackgroundColor(toolbarColor);
@@ -1112,10 +1063,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
                 // Determine icon and text color
                 int iconColor;
-                if (
-                        _options.getToolbarTextColor() != null &&
-                                !_options.getToolbarTextColor().isEmpty()
-                ) {
+                if (_options.getToolbarTextColor() != null && !_options.getToolbarTextColor().isEmpty()) {
                     try {
                         iconColor = Color.parseColor(_options.getToolbarTextColor());
                     } catch (IllegalArgumentException e) {
@@ -1145,18 +1093,14 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
                     // Determine proper status bar text color (light or dark icons)
                     boolean isDarkBackground = isDarkColor(toolbarColor);
-                    WindowInsetsControllerCompat insetsController =
-                            new WindowInsetsControllerCompat(
-                                    getWindow(),
-                                    getWindow().getDecorView()
-                            );
+                    WindowInsetsControllerCompat insetsController = new WindowInsetsControllerCompat(
+                            getWindow(),
+                            getWindow().getDecorView()
+                    );
                     insetsController.setAppearanceLightStatusBars(!isDarkBackground);
                 }
             } catch (IllegalArgumentException e) {
-                Log.e(
-                        "InAppBrowser",
-                        "Invalid toolbar color: " + _options.getToolbarColor()
-                );
+                Log.e("InAppBrowser", "Invalid toolbar color: " + _options.getToolbarColor());
             }
         }
 
@@ -1175,9 +1119,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                                             new OnClickListener() {
                                                 public void onClick(DialogInterface dialog, int which) {
                                                     // Close button clicked, do something
-                                                    String currentUrl = _webView != null
-                                                            ? _webView.getUrl()
-                                                            : "";
+                                                    String currentUrl = _webView != null ? _webView.getUrl() : "";
                                                     dismiss();
                                                     if (_options != null && _options.getCallbacks() != null) {
                                                         _options.getCallbacks().closeEvent(currentUrl);
@@ -1208,16 +1150,11 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             _toolbar.findViewById(R.id.backButton).setVisibility(View.GONE);
 
             // Hide buttonNearDone
-            ImageButton buttonNearDoneView = _toolbar.findViewById(
-                    R.id.buttonNearDone
-            );
+            ImageButton buttonNearDoneView = _toolbar.findViewById(R.id.buttonNearDone);
             buttonNearDoneView.setVisibility(View.GONE);
 
             // In activity mode, always make the share button visible by setting a default shareSubject if not provided
-            if (
-                    _options.getShareSubject() == null ||
-                            _options.getShareSubject().isEmpty()
-            ) {
+            if (_options.getShareSubject() == null || _options.getShareSubject().isEmpty()) {
                 _options.setShareSubject("Share");
                 Log.d("InAppBrowser", "Activity mode: Setting default shareSubject");
             }
@@ -1236,17 +1173,13 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             _toolbar.findViewById(R.id.shareButton).setVisibility(View.GONE);
 
             // Hide buttonNearDone
-            ImageButton buttonNearDoneView = _toolbar.findViewById(
-                    R.id.buttonNearDone
-            );
+            ImageButton buttonNearDoneView = _toolbar.findViewById(R.id.buttonNearDone);
             buttonNearDoneView.setVisibility(View.GONE);
 
             // Hide reload button
             _toolbar.findViewById(R.id.reloadButton).setVisibility(View.GONE);
         } else if (TextUtils.equals(_options.getToolbarType(), "navigation")) {
-            ImageButton buttonNearDoneView = _toolbar.findViewById(
-                    R.id.buttonNearDone
-            );
+            ImageButton buttonNearDoneView = _toolbar.findViewById(R.id.buttonNearDone);
             buttonNearDoneView.setVisibility(View.GONE);
             // Status bar color is already set at the top of this method, no need to set again
         } else if (TextUtils.equals(_options.getToolbarType(), "blank")) {
@@ -1263,8 +1196,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
             // Adjust the WebView layout to take full space
             if (_webView.getLayoutParams() instanceof androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) {
-                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams params =
-                        (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) _webView.getLayoutParams();
+                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams params = (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) _webView.getLayoutParams();
                 params.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
                 params.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
                 params.leftToLeft = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
@@ -1279,9 +1211,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
             Options.ButtonNearDone buttonNearDone = _options.getButtonNearDone();
             if (buttonNearDone != null) {
-                ImageButton buttonNearDoneView = _toolbar.findViewById(
-                        R.id.buttonNearDone
-                );
+                ImageButton buttonNearDoneView = _toolbar.findViewById(R.id.buttonNearDone);
                 buttonNearDoneView.setVisibility(View.VISIBLE);
 
                 // Handle different icon types
@@ -1296,39 +1226,24 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                         }
 
                         // Get resource ID
-                        int resourceId = _context
-                                .getResources()
-                                .getIdentifier(iconName, "drawable", _context.getPackageName());
+                        int resourceId = _context.getResources().getIdentifier(iconName, "drawable", _context.getPackageName());
 
                         if (resourceId != 0) {
                             // Set the vector drawable
                             buttonNearDoneView.setImageResource(resourceId);
                             // Apply color filter
                             buttonNearDoneView.setColorFilter(iconColor);
-                            Log.d(
-                                    "InAppBrowser",
-                                    "Successfully loaded vector drawable: " + iconName
-                            );
+                            Log.d("InAppBrowser", "Successfully loaded vector drawable: " + iconName);
                         } else {
-                            Log.e(
-                                    "InAppBrowser",
-                                    "Vector drawable not found: " + iconName + ", using fallback"
-                            );
+                            Log.e("InAppBrowser", "Vector drawable not found: " + iconName + ", using fallback");
                             // Fallback to a common system icon
-                            buttonNearDoneView.setImageResource(
-                                    android.R.drawable.ic_menu_info_details
-                            );
+                            buttonNearDoneView.setImageResource(android.R.drawable.ic_menu_info_details);
                             buttonNearDoneView.setColorFilter(iconColor);
                         }
                     } catch (Exception e) {
-                        Log.e(
-                                "InAppBrowser",
-                                "Error loading vector drawable: " + e.getMessage()
-                        );
+                        Log.e("InAppBrowser", "Error loading vector drawable: " + e.getMessage());
                         // Fallback to a common system icon
-                        buttonNearDoneView.setImageResource(
-                                android.R.drawable.ic_menu_info_details
-                        );
+                        buttonNearDoneView.setImageResource(android.R.drawable.ic_menu_info_details);
                         buttonNearDoneView.setColorFilter(iconColor);
                     }
                 } else if ("asset".equals(iconType)) {
@@ -1345,10 +1260,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                             try {
                                 inputStream = assetManager.open(buttonNearDone.getIcon());
                             } catch (IOException e2) {
-                                Log.e(
-                                        "InAppBrowser",
-                                        "SVG file not found in assets: " + buttonNearDone.getIcon()
-                                );
+                                Log.e("InAppBrowser", "SVG file not found in assets: " + buttonNearDone.getIcon());
                                 buttonNearDoneView.setVisibility(View.GONE);
                                 return;
                             }
@@ -1357,21 +1269,14 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                         // Parse and render SVG
                         SVG svg = SVG.getFromInputStream(inputStream);
                         if (svg == null) {
-                            Log.e(
-                                    "InAppBrowser",
-                                    "Failed to parse SVG icon: " + buttonNearDone.getIcon()
-                            );
+                            Log.e("InAppBrowser", "Failed to parse SVG icon: " + buttonNearDone.getIcon());
                             buttonNearDoneView.setVisibility(View.GONE);
                             return;
                         }
 
                         // Get the dimensions from options or use SVG's size
-                        float width = buttonNearDone.getWidth() > 0
-                                ? buttonNearDone.getWidth()
-                                : 24;
-                        float height = buttonNearDone.getHeight() > 0
-                                ? buttonNearDone.getHeight()
-                                : 24;
+                        float width = buttonNearDone.getWidth() > 0 ? buttonNearDone.getWidth() : 24;
+                        float height = buttonNearDone.getHeight() > 0 ? buttonNearDone.getHeight() : 24;
 
                         // Get density for proper scaling
                         float density = _context.getResources().getDisplayMetrics().density;
@@ -1383,19 +1288,13 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                         svg.setDocumentHeight(targetHeight);
 
                         // Create a bitmap and render SVG to it for better quality
-                        Bitmap bitmap = Bitmap.createBitmap(
-                                targetWidth,
-                                targetHeight,
-                                Bitmap.Config.ARGB_8888
-                        );
+                        Bitmap bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888);
                         Canvas canvas = new Canvas(bitmap);
                         svg.renderToCanvas(canvas);
 
                         // Apply color filter to the bitmap
                         Paint paint = new Paint();
-                        paint.setColorFilter(
-                                new PorterDuffColorFilter(iconColor, PorterDuff.Mode.SRC_IN)
-                        );
+                        paint.setColorFilter(new PorterDuffColorFilter(iconColor, PorterDuff.Mode.SRC_IN));
                         Canvas colorFilterCanvas = new Canvas(bitmap);
                         colorFilterCanvas.drawBitmap(bitmap, 0, 0, paint);
 
@@ -1404,21 +1303,14 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                         buttonNearDoneView.setScaleType(ImageView.ScaleType.FIT_CENTER);
                         buttonNearDoneView.setPadding(12, 12, 12, 12); // Standard button padding
                     } catch (SVGParseException e) {
-                        Log.e(
-                                "InAppBrowser",
-                                "Error loading SVG icon: " + e.getMessage(),
-                                e
-                        );
+                        Log.e("InAppBrowser", "Error loading SVG icon: " + e.getMessage(), e);
                         buttonNearDoneView.setVisibility(View.GONE);
                     } finally {
                         if (inputStream != null) {
                             try {
                                 inputStream.close();
                             } catch (IOException e) {
-                                Log.e(
-                                        "InAppBrowser",
-                                        "Error closing input stream: " + e.getMessage()
-                                );
+                                Log.e("InAppBrowser", "Error closing input stream: " + e.getMessage());
                             }
                         }
                     }
@@ -1429,29 +1321,18 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 }
 
                 // Set the click listener
-                buttonNearDoneView.setOnClickListener(view ->
-                        _options.getCallbacks().buttonNearDoneClicked()
-                );
+                buttonNearDoneView.setOnClickListener(view -> _options.getCallbacks().buttonNearDoneClicked());
             } else {
-                ImageButton buttonNearDoneView = _toolbar.findViewById(
-                        R.id.buttonNearDone
-                );
+                ImageButton buttonNearDoneView = _toolbar.findViewById(R.id.buttonNearDone);
                 buttonNearDoneView.setVisibility(View.GONE);
             }
         }
 
         // Add share button functionality
         ImageButton shareButton = _toolbar.findViewById(R.id.shareButton);
-        if (
-                _options.getShareSubject() != null &&
-                        !_options.getShareSubject().isEmpty()
-        ) {
+        if (_options.getShareSubject() != null && !_options.getShareSubject().isEmpty()) {
             shareButton.setVisibility(View.VISIBLE);
-            Log.d(
-                    "InAppBrowser",
-                    "Share button should be visible, shareSubject: " +
-                            _options.getShareSubject()
-            );
+            Log.d("InAppBrowser", "Share button should be visible, shareSubject: " + _options.getShareSubject());
 
             // Apply the same color filter as other buttons to ensure visibility
             shareButton.setColorFilter(iconColor);
@@ -1470,10 +1351,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                                         shareUrl();
                                     }
                             )
-                            .setNegativeButton(
-                                    shareDisclaimer.getString("cancelBtn", "Cancel"),
-                                    null
-                            )
+                            .setNegativeButton(shareDisclaimer.getString("cancelBtn", "Cancel"), null)
                             .show();
                 } else {
                     shareUrl();
@@ -1570,11 +1448,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             bitmap.recycle();
 
             // Get content URI for the converted file
-            return FileProvider.getUriForFile(
-                    activity,
-                    activity.getPackageName() + ".fileprovider",
-                    jpegFile
-            );
+            return FileProvider.getUriForFile(activity, activity.getPackageName() + ".fileprovider", jpegFile);
         } catch (Exception e) {
             Log.e("InAppBrowser", "Error converting HEIC to JPEG: " + e.getMessage());
             return heicUri;
@@ -1631,15 +1505,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     }
 
     public void handleProxyResultError(String result, String id) {
-        Log.i(
-                "InAppBrowserProxy",
-                String.format(
-                        "handleProxyResultError: %s, ok: %s id: %s",
-                        result,
-                        false,
-                        id
-                )
-        );
+        Log.i("InAppBrowserProxy", String.format("handleProxyResultError: %s, ok: %s id: %s", result, false, id));
         ProxiedRequest proxiedRequest = proxiedRequestsHashmap.get(id);
         if (proxiedRequest == null) {
             Log.e("InAppBrowserProxy", "proxiedRequest is null");
@@ -1650,10 +1516,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     }
 
     public void handleProxyResultOk(JSONObject result, String id) {
-        Log.i(
-                "InAppBrowserProxy",
-                String.format("handleProxyResultOk: %s, ok: %s, id: %s", result, true, id)
-        );
+        Log.i("InAppBrowserProxy", String.format("handleProxyResultOk: %s, ok: %s, id: %s", result, true, id));
         ProxiedRequest proxiedRequest = proxiedRequestsHashmap.get(id);
         if (proxiedRequest == null) {
             Log.e("InAppBrowserProxy", "proxiedRequest is null");
@@ -1694,10 +1557,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         }
 
         if (!((100 <= code && code <= 299) || (400 <= code && code <= 599))) {
-            Log.e(
-                    "InAppBrowserProxy",
-                    String.format("Status code %s outside of the allowed range", code)
-            );
+            Log.e("InAppBrowserProxy", String.format("Status code %s outside of the allowed range", code));
             return;
         }
 
@@ -1707,123 +1567,127 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8))
         );
 
-        webResourceResponse.setStatusCodeAndReasonPhrase(
-                code,
-                getReasonPhrase(code)
-        );
+        webResourceResponse.setStatusCodeAndReasonPhrase(code, getReasonPhrase(code));
         proxiedRequest.response = webResourceResponse;
         proxiedRequest.semaphore.release();
     }
 
     private void setWebViewClient() {
-        _webView.setWebViewClient(new WebViewClient() {
+        _webView.setWebViewClient(
+                new WebViewClient() {
+                    @Override
+                    public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                        super.onPageStarted(view, url, favicon);
+                        injectAndroidJavaScriptInterface();
+                        injectFastGeoPermissionShim();
+                        if (loadingSpinner != null) {
+                            loadingSpinner.setVisibility(View.VISIBLE);
+                            loadingSpinner.bringToFront();
+                        }
+                        updateBackgroundColor();
+                    }
 
-            @Override
-            public void onPageStarted(WebView view, String url, Bitmap favicon) {
-                super.onPageStarted(view, url, favicon);
-                injectAndroidJavaScriptInterface();
-                injectFastGeoPermissionShim();
-                if (loadingSpinner != null) {
-                    loadingSpinner.setVisibility(View.VISIBLE);
-                    loadingSpinner.bringToFront();
-                }
-                updateBackgroundColor();
-            }
+                    // API 21+
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                        String url = (request != null && request.getUrl() != null) ? request.getUrl().toString() : null;
+                        return handleSpecialSchemes(activity, _webView, url);
+                    }
 
-            // API 21+
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                String url = (request != null && request.getUrl() != null) ? request.getUrl().toString() : null;
-                return handleSpecialSchemes(activity, _webView, url);
-            }
+                    // Для старых API
+                    @Override
+                    @Deprecated
+                    public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                        return handleSpecialSchemes(activity, _webView, url);
+                    }
 
-            // Для старых API
-            @Override
-            @Deprecated
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return handleSpecialSchemes(activity, _webView, url);
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                injectClipboardPolyfill();
-                if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
-                if (!isInitialized) {
-                    isInitialized = true;
-                    if (_options.getCallbacks() != null) _options.getCallbacks().pageLoaded();
-                }
-                if (activity != null && !cameraAlertShown) {
-                    activity.runOnUiThread(() -> {
-                        boolean isCameraPermissionRequested = false;
-                        String[] permissions = _options.getPermissions();
-                        if (permissions != null) {
-                            for (String permission : permissions) {
-                                if ("camera".equalsIgnoreCase(permission)) {
-                                    isCameraPermissionRequested = true;
-                                    break;
+                    @Override
+                    public void onPageFinished(WebView view, String url) {
+                        super.onPageFinished(view, url);
+                        injectClipboardPolyfill();
+                        if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
+                        if (!isInitialized) {
+                            isInitialized = true;
+                            if (_options.getCallbacks() != null) _options.getCallbacks().pageLoaded();
+                        }
+                        if (activity != null && !cameraAlertShown) {
+                            activity.runOnUiThread(() -> {
+                                boolean isCameraPermissionRequested = false;
+                                String[] permissions = _options.getPermissions();
+                                if (permissions != null) {
+                                    for (String permission : permissions) {
+                                        if ("camera".equalsIgnoreCase(permission)) {
+                                            isCameraPermissionRequested = true;
+                                            break;
+                                        }
+                                    }
                                 }
-                            }
+                                if (
+                                        isCameraPermissionRequested &&
+                                                ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    cameraAlertShown = true;
+                                    new AlertDialog.Builder(activity)
+                                            .setTitle("Доступ к камере")
+                                            .setMessage("Для использования камеры необходимо предоставить разрешение")
+                                            .setPositiveButton(
+                                                    "Открыть настройки",
+                                                    (dialog, which) -> {
+                                                        Intent intent = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                                                        Uri uri = Uri.fromParts("package", activity.getPackageName(), null);
+                                                        intent.setData(uri);
+                                                        activity.startActivity(intent);
+                                                    }
+                                            )
+                                            .setNegativeButton("Отмена", (dialog, which) -> dialog.dismiss())
+                                            .setCancelable(false)
+                                            .show();
+                                }
+                            });
                         }
-                        if (isCameraPermissionRequested &&
-                                ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                            cameraAlertShown = true;
-                            new AlertDialog.Builder(activity)
-                                    .setTitle("Доступ к камере")
-                                    .setMessage("Для использования камеры необходимо предоставить разрешение")
-                                    .setPositiveButton("Открыть настройки", (dialog, which) -> {
-                                        Intent intent = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-                                        Uri uri = Uri.fromParts("package", activity.getPackageName(), null);
-                                        intent.setData(uri);
-                                        activity.startActivity(intent);
-                                    })
-                                    .setNegativeButton("Отмена", (dialog, which) -> dialog.dismiss())
-                                    .setCancelable(false)
-                                    .show();
-                        }
-                    });
-                }
-                if (_options.getCallbacks() != null) _options.getCallbacks().urlChangeEvent(url);
-            }
+                        if (_options.getCallbacks() != null) _options.getCallbacks().urlChangeEvent(url);
+                    }
 
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                super.onReceivedError(view, request, error);
-                if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
-            }
-        });
+                    @Override
+                    public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                        super.onReceivedError(view, request, error);
+                        if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
+                    }
+                }
+        );
     }
 
     private void injectClipboardPolyfill() {
         if (_webView == null) return;
-        String script = """
-        (function () {
-          try {
-            if (!navigator.clipboard) {
-              navigator.clipboard = {};
-            }
-            // Полифилл writeText
-            navigator.clipboard.writeText = async function(text) {
-              try {
-                window.ClipboardBridge.writeText(String(text ?? ''));
-                return;
-              } catch (e) {
-                throw e;
-              }
-            };
-            // Полифилл readText
-            navigator.clipboard.readText = async function() {
-              try {
-                return window.ClipboardBridge.readText();
-              } catch (e) {
-                throw e;
-              }
-            };
-          } catch (e) {
-            console.error('Clipboard polyfill init error', e);
-          }
-        })();
-    """;
+        String script =
+                """
+                            (function () {
+                              try {
+                                if (!navigator.clipboard) {
+                                  navigator.clipboard = {};
+                                }
+                                // Полифилл writeText
+                                navigator.clipboard.writeText = async function(text) {
+                                  try {
+                                    window.ClipboardBridge.writeText(String(text ?? ''));
+                                    return;
+                                  } catch (e) {
+                                    throw e;
+                                  }
+                                };
+                                // Полифилл readText
+                                navigator.clipboard.readText = async function() {
+                                  try {
+                                    return window.ClipboardBridge.readText();
+                                  } catch (e) {
+                                    throw e;
+                                  }
+                                };
+                              } catch (e) {
+                                console.error('Clipboard polyfill init error', e);
+                              }
+                            })();
+                        """;
         _webView.evaluateJavascript(script, null);
     }
 
@@ -1844,7 +1708,6 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             super.onBackPressed();
         }
     }
-
 
     public static String getReasonPhrase(int statusCode) {
         switch (statusCode) {
@@ -2021,21 +1884,13 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             Resources.Theme theme = _context.getTheme();
             TypedValue typedValue = new TypedValue();
 
-            if (
-                    theme.resolveAttribute(android.R.attr.isLightTheme, typedValue, true)
-            ) {
+            if (theme.resolveAttribute(android.R.attr.isLightTheme, typedValue, true)) {
                 // isLightTheme exists - returns true if light, false if dark
                 return typedValue.data != 1;
             }
 
             // Fallback method - check background color of window
-            if (
-                    theme.resolveAttribute(
-                            android.R.attr.windowBackground,
-                            typedValue,
-                            true
-                    )
-            ) {
+            if (theme.resolveAttribute(android.R.attr.windowBackground, typedValue, true)) {
                 int backgroundColor = typedValue.data;
                 return isDarkColor(backgroundColor);
             }
@@ -2099,11 +1954,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
             // Get content URI through FileProvider
             try {
-                return androidx.core.content.FileProvider.getUriForFile(
-                        _context,
-                        _context.getPackageName() + ".fileprovider",
-                        tempFile
-                );
+                return androidx.core.content.FileProvider.getUriForFile(_context, _context.getPackageName() + ".fileprovider", tempFile);
             } catch (IllegalArgumentException e) {
                 // Try using external storage as fallback
                 java.io.File externalCacheDir = _context.getExternalCacheDir();
@@ -2128,52 +1979,41 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
     private File createImageFile() throws IOException {
         // Create an image file name
-        String timeStamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(
-                new java.util.Date()
-        );
+        String timeStamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
         String imageFileName = "JPEG_" + timeStamp + "_";
-        File storageDir = activity.getExternalFilesDir(
-                Environment.DIRECTORY_PICTURES
-        );
-        File image = File.createTempFile(
-                imageFileName,/* prefix */
-                ".jpg",/* suffix */
-                storageDir/* directory */
-        );
+        File storageDir = activity.getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        File image = File.createTempFile(imageFileName, /* prefix */".jpg", /* suffix */storageDir/* directory */);
         return image;
     }
 
     private class MyWebChromeClient extends WebChromeClient {
 
-      @Override
-      public void onGeolocationPermissionsShowPrompt(
-              String origin,
-              android.webkit.GeolocationPermissions.Callback callback
-      ) {
-        // Раз приложение уже имеет ACCESS_*_LOCATION — сразу разрешаем сайту и запоминаем это.
-        callback.invoke(origin, true, /*retain*/ true);
-      }
+        @Override
+        public void onGeolocationPermissionsShowPrompt(String origin, android.webkit.GeolocationPermissions.Callback callback) {
+            // Раз приложение уже имеет ACCESS_*_LOCATION — сразу разрешаем сайту и запоминаем это.
+            callback.invoke(origin, true, /*retain*/true);
+        }
 
-
-
-      @Override
+        @Override
         public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
             // создаём временный WebView, в который Android попытается загрузить popup-URL,
             // а мы всё перехватим и направим в основной _webView
             WebView temp = new WebView(view.getContext());
-            temp.setWebViewClient(new WebViewClient() {
-                @Override
-                public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req) {
-                    String u = (req != null && req.getUrl() != null) ? req.getUrl().toString() : null;
-                    return handleSpecialSchemes(activity, _webView, u);
-                }
+            temp.setWebViewClient(
+                    new WebViewClient() {
+                        @Override
+                        public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req) {
+                            String u = (req != null && req.getUrl() != null) ? req.getUrl().toString() : null;
+                            return handleSpecialSchemes(activity, _webView, u);
+                        }
 
-                @Override
-                @Deprecated
-                public boolean shouldOverrideUrlLoading(WebView v, String u) {
-                    return handleSpecialSchemes(activity, _webView, u);
-                }
-            });
+                        @Override
+                        @Deprecated
+                        public boolean shouldOverrideUrlLoading(WebView v, String u) {
+                            return handleSpecialSchemes(activity, _webView, u);
+                        }
+                    }
+            );
 
             WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
             transport.setWebView(temp);
@@ -2184,7 +2024,11 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         @Override
         public void onPermissionRequest(PermissionRequest request) {
             // Раз уже дал пермишены приложению — сразу выдаём их WebView
-            try { request.grant(request.getResources()); } catch (Throwable t) { request.deny(); }
+            try {
+                request.grant(request.getResources());
+            } catch (Throwable t) {
+                request.deny();
+            }
         }
 
         // === FULLSCREEN API ===
@@ -2208,18 +2052,19 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
             // Добавляем full-screen слой поверх диалога
             FrameLayout decorView = (FrameLayout) decor;
-            decorView.addView(mCustomView, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT));
+            decorView.addView(
+                    mCustomView,
+                    new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            );
 
             // Прячем статус/навигацию, чтобы реально был fullscreen
             int flags =
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                            View.SYSTEM_UI_FLAG_FULLSCREEN |
+                            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
             decor.setSystemUiVisibility(flags);
 
             // На всякий – выключим авто-флаг fit system windows
@@ -2258,16 +2103,9 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             }
         }
 
-
-
-
         /// //
         @Override
-        public boolean onShowFileChooser(
-                WebView webView,
-                ValueCallback<Uri[]> filePathCallback,
-                FileChooserParams fileChooserParams
-        ) {
+        public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
             mFilePathCallback = filePathCallback;
 
             // Check if this is a camera capture request
@@ -2362,15 +2200,17 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 }
             }
         } else if (requestCode == LOCATION_PERMISSION_REQUEST_CODE) {
-          boolean granted = false;
-          for (int r : grantResults) {
-            if (r == PackageManager.PERMISSION_GRANTED) { granted = true; break; }
-          }
-          Log.d("InAppBrowser", "Location permission " + (granted ? "granted" : "denied"));
-          // Ничего не ждём и не вызываем pending callback — мы уже ответили сайту сразу.
-          // По желанию: можно сделать _webView.reload(); если бизнес-логика сайта этого требует.
+            boolean granted = false;
+            for (int r : grantResults) {
+                if (r == PackageManager.PERMISSION_GRANTED) {
+                    granted = true;
+                    break;
+                }
+            }
+            Log.d("InAppBrowser", "Location permission " + (granted ? "granted" : "denied"));
+            // Ничего не ждём и не вызываем pending callback — мы уже ответили сайту сразу.
+            // По желанию: можно сделать _webView.reload(); если бизнес-логика сайта этого требует.
         }
-
     }
 
     private void setupLoadingSpinner() {
