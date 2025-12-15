@@ -327,13 +327,15 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface", "ClickableViewAccessibility"})
     public void presentWebView() {
+
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         setCancelable(true);
-        Objects
-                .requireNonNull(getWindow())
-                .setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+
+        // ❌ УБИРАЕМ FULLSCREEN – он ломает insets
+        // getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        // getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+
         setContentView(R.layout.activity_browser);
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
         // Setup loading spinner
         setupLoadingSpinner();
@@ -341,38 +343,26 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         // Set background color
         updateBackgroundColor();
 
-        // Check camera permission on WebView open
-        if (activity != null && permissionHandler != null) {
-            Log.d("InAppBrowser", "Requesting camera permission on WebView open via PermissionHandler");
-            // Create a dummy PermissionRequest to trigger the permission handler
-            PermissionRequest dummyRequest = new PermissionRequest() {
-                @Override
-                public String[] getResources() {
-                    return new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE};
-                }
-
-                @Override
-                public void grant(String[] resources) {
-                    Log.d("InAppBrowser", "Camera permission granted via PermissionHandler");
-                }
-
-                @Override
-                public void deny() {
-                    Log.d("InAppBrowser", "Camera permission denied via PermissionHandler");
-                }
-
-                @Override
-                public Uri getOrigin() {
-                    return Uri.parse(_options.getUrl());
-                }
-            };
-            permissionHandler.handleCameraPermissionRequest(dummyRequest);
-        }
-
         this._webView = findViewById(R.id.browser_view);
-        updateBackgroundColor(); // Apply background color after WebView creation
 
-        //        applyInsets();
+        // === ДОБАВЛЯЕМ ПРАВИЛЬНУЮ ОБРАБОТКУ INSETS ===
+        View rootView = getWindow().getDecorView().findViewById(android.R.id.content);
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootView, (view, insets) -> {
+            Insets sysBars = insets.getInsets(WindowInsetsCompat.Type.statusBars());
+
+            // Добавляем верхний отступ для тулбара
+            if (_toolbar != null) {
+                _toolbar.setPadding(
+                        _toolbar.getPaddingLeft(),
+                        sysBars.top,
+                        _toolbar.getPaddingRight(),
+                        _toolbar.getPaddingBottom()
+                );
+            }
+
+            return insets;
+        });
 
         // Add JavaScript interface
         _webView.addJavascriptInterface(new JavaScriptInterface(), "mobileApp");
@@ -381,177 +371,45 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         // WebView settings
         WebSettings webSettings = _webView.getSettings();
         webSettings.setJavaScriptEnabled(true);
-        webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
-        webSettings.setDatabaseEnabled(true);
         webSettings.setDomStorageEnabled(true);
-        webSettings.setAllowFileAccess(true);
-        webSettings.setLoadWithOverviewMode(true);
-        webSettings.setUseWideViewPort(true);
-        webSettings.setAllowFileAccessFromFileURLs(true);
-        webSettings.setAllowUniversalAccessFromFileURLs(true);
+        webSettings.setDatabaseEnabled(true);
+        webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
         webSettings.setMediaPlaybackRequiresUserGesture(false);
+        webSettings.setAllowUniversalAccessFromFileURLs(true);
+        webSettings.setAllowFileAccess(true);
         webSettings.setSupportMultipleWindows(true);
         webSettings.setGeolocationEnabled(true);
         webSettings.setGeolocationDatabasePath(activity.getFilesDir().getAbsolutePath());
 
+        // Apply text zoom from options
         if (_options.getTextZoom() > 0) {
             webSettings.setTextZoom(_options.getTextZoom());
         }
 
-        // Set WebViewClient only AFTER _webView is initialized
+        // Set WebViewClient
         setWebViewClient();
 
+        // Set ChromeClient
         _webView.setWebChromeClient(new MyWebChromeClient());
 
-        // ---- EDGE SWIPE без убийства скроллов ----
-        final float density = _context.getResources().getDisplayMetrics().density;
-        final int EDGE_SLOP_PX = (int) (24 * density);
-        final int SWIPE_THRESHOLD = (int) (120 * density);
-        final int SWIPE_VELOCITY_THRESHOLD = (int) (200 * density);
-
-        // служебные флаги для onTouch
-        final boolean[] edgeSwipeArmed = {false};
-        final boolean[] consumedEdgeSwipe = {false};
-        final float[] startX = {0f}, startY = {0f};
-
-        gestureDetector =
-                new android.view.GestureDetector(
-                        _context,
-                        new android.view.GestureDetector.SimpleOnGestureListener() {
-                            @Override
-                            public boolean onDown(android.view.MotionEvent e) {
-                                // нужно true, чтобы пришёл onFling
-                                return true;
-                            }
-
-                            @Override
-                            public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2, float velocityX, float velocityY) {
-                                if (_webView == null || e1 == null || e2 == null) return false;
-                                if (!edgeSwipeArmed[0]) return false; // только если стартовали у края
-                                if (e1.getPointerCount() > 1 || e2.getPointerCount() > 1) return false;
-
-                                float diffX = e2.getX() - e1.getX();
-                                float diffY = e2.getY() - e1.getY();
-
-                                // горизонтальная доминанта и пороги
-                                if (Math.abs(diffX) <= Math.abs(diffY)) return false;
-                                if (Math.abs(diffX) < SWIPE_THRESHOLD) return false;
-                                if (Math.abs(velocityX) < SWIPE_VELOCITY_THRESHOLD) return false;
-
-                                int w = _webView.getWidth();
-                                boolean fromLeftEdge = e1.getX() <= EDGE_SLOP_PX;
-                                boolean fromRightEdge = e1.getX() >= (w - EDGE_SLOP_PX);
-
-                                if (diffX > 0) {
-                                    // вправо (назад)
-                                    if (!fromLeftEdge) return false;
-                                    // если контент может скроллиться влево — не перехватываем
-                                    if (_webView.canScrollHorizontally(-1)) return false;
-
-                                    if (_webView.canGoBack()) {
-                                        _webView.goBack();
-                                        consumedEdgeSwipe[0] = true;
-                                        return true; // жест обработан
-                                    }
-                                    return false;
-                                } else {
-                                    // влево (вперёд)
-                                    if (!fromRightEdge) return false;
-                                    // если контент может скроллиться вправо — не перехватываем
-                                    if (_webView.canScrollHorizontally(1)) return false;
-
-                                    if (_webView.canGoForward()) {
-                                        _webView.goForward();
-                                        consumedEdgeSwipe[0] = true;
-                                        return true; // жест обработан
-                                    }
-                                    return false;
-                                }
-                            }
-                        }
-                );
-
-        // крайне важно: отдаём события WebView (false), кроме момента, когда САМИ перехватили edge-swipe
-        _webView.setOnTouchListener((v, event) -> {
-            switch (event.getActionMasked()) {
-                case android.view.MotionEvent.ACTION_DOWN: {
-                    consumedEdgeSwipe[0] = false;
-                    startX[0] = event.getX();
-                    startY[0] = event.getY();
-
-                    int w = _webView.getWidth();
-                    boolean leftEdge = startX[0] <= EDGE_SLOP_PX;
-                    boolean rightEdge = startX[0] >= (w - EDGE_SLOP_PX);
-                    edgeSwipeArmed[0] = leftEdge || rightEdge; // «вооружаемся» только у краёв
-                    break;
-                }
-                case android.view.MotionEvent.ACTION_MOVE: {
-                    if (edgeSwipeArmed[0]) {
-                        float dx = event.getX() - startX[0];
-                        // если пользователь реально пытается скроллить страницу — разоружаем жест
-                        if ((dx > 0 && _webView.canScrollHorizontally(-1)) || (dx < 0 && _webView.canScrollHorizontally(1))) {
-                            edgeSwipeArmed[0] = false;
-                        }
-                    }
-                    break;
-                }
-                case android.view.MotionEvent.ACTION_CANCEL:
-                case android.view.MotionEvent.ACTION_UP: {
-                    // вернём true только если именно мы обработали edge-swipe
-                    boolean consumed = consumedEdgeSwipe[0];
-                    edgeSwipeArmed[0] = false;
-                    consumedEdgeSwipe[0] = false;
-                    // если consumed == true, «съедим» UP-событие; иначе пустим в WebView
-                    if (consumed) return true;
-                    break;
-                }
-            }
-
-            // всё равно прокидываем в жест-детектор (он выставит consumedEdgeSwipe при onFling)
-            gestureDetector.onTouchEvent(event);
-
-            // по умолчанию НЕ перехватываем — WebView продолжит обрабатывать скроллы/зум/клики
-            return consumedEdgeSwipe[0];
-        });
-
-        // === GEO PREFLIGHT ===
-        if (activity != null && !geoPreflightRequested) {
-            geoPreflightRequested = true;
-            boolean fineGranted =
-                    ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-            boolean coarseGranted =
-                    ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_COARSE_LOCATION) ==
-                            PackageManager.PERMISSION_GRANTED;
-
-            if (!fineGranted && !coarseGranted) {
-                ActivityCompat.requestPermissions(
-                        activity,
-                        new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION},
-                        LOCATION_PERMISSION_REQUEST_CODE
-                );
-            }
-        }
-
-        // Load URL and headers
+        // Load Url
         Map<String, String> requestHeaders = new HashMap<>();
         if (_options.getHeaders() != null) {
             Iterator<String> keys = _options.getHeaders().keys();
             while (keys.hasNext()) {
                 String key = keys.next();
-                if (TextUtils.equals(key.toLowerCase(), "user-agent")) {
-                    _webView.getSettings().setUserAgentString(_options.getHeaders().getString(key));
+                if ("user-agent".equalsIgnoreCase(key)) {
+                    webSettings.setUserAgentString(_options.getHeaders().getString(key));
                 } else {
                     requestHeaders.put(key, _options.getHeaders().getString(key));
                 }
             }
         }
+
         _webView.loadUrl(_options.getUrl(), requestHeaders);
-        _webView.requestFocus();
-        _webView.requestFocusFromTouch();
 
-        setupToolbar();
+        setupToolbar(); // must be after webview created
 
-        // Apply background color after toolbar is set up
         updateBackgroundColor();
 
         if (!_options.isPresentAfterPageLoad()) {
@@ -559,6 +417,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             _options.getPluginCall().resolve();
         }
     }
+
 
     private boolean handleSpecialSchemes(Activity activity, WebView mainWebView, String url) {
         if (url == null) return false;
@@ -737,162 +596,6 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         );
     }
 
-    /**
-     * Apply window insets to the WebView to properly handle edge-to-edge display
-     * and fix status bar overlap issues on Android 15+
-     */
-    private void applyInsets() {
-        if (_webView == null) {
-            return;
-        }
-
-        // Check if we need Android 15+ specific fixes
-        boolean isAndroid15Plus = Build.VERSION.SDK_INT >= 35;
-
-        // Get parent view
-        ViewParent parent = findViewById(R.id.browser_view).getParent();
-
-        // Find status bar color view and toolbar for Android 15+ specific handling
-        View statusBarColorView = findViewById(R.id.status_bar_color_view);
-        View toolbarView = findViewById(R.id.tool_bar);
-
-        // Special handling for Android 15+
-        if (isAndroid15Plus) {
-            // Get AppBarLayout which contains the toolbar
-            if (toolbarView != null && toolbarView.getParent() instanceof com.google.android.material.appbar.AppBarLayout) {
-                com.google.android.material.appbar.AppBarLayout appBarLayout = (com.google.android.material.appbar.AppBarLayout) toolbarView.getParent();
-                // Remove elevation to eliminate shadows (only on Android 15+)
-                appBarLayout.setElevation(0);
-                appBarLayout.setStateListAnimator(null);
-                appBarLayout.setOutlineProvider(null);
-
-                // Determine background color to use
-                int backgroundColor = Color.BLACK; // Default fallback
-                if (_options.getToolbarColor() != null && !_options.getToolbarColor().isEmpty()) {
-                    try {
-                        backgroundColor = Color.parseColor(_options.getToolbarColor());
-                    } catch (IllegalArgumentException e) {
-                        Log.e("InAppBrowser", "Invalid toolbar color, using black: " + e.getMessage());
-                    }
-                } else {
-                    // Follow system theme if no color specified
-                    boolean isDarkTheme = isDarkThemeEnabled();
-                    backgroundColor = isDarkTheme ? Color.BLACK : Color.WHITE;
-                }
-
-                // Apply fixes for Android 15+ using a delayed post
-                final int finalBgColor = backgroundColor;
-                _webView.post(() -> {
-                    // Get status bar height
-                    int statusBarHeight = 0;
-                    int resourceId = getContext().getResources().getIdentifier("status_bar_height", "dimen", "android");
-                    if (resourceId > 0) {
-                        statusBarHeight = getContext().getResources().getDimensionPixelSize(resourceId);
-                    }
-
-                    // Fix status bar view
-                    if (statusBarColorView != null) {
-                        ViewGroup.LayoutParams params = statusBarColorView.getLayoutParams();
-                        params.height = statusBarHeight;
-                        statusBarColorView.setLayoutParams(params);
-                        statusBarColorView.setBackgroundColor(finalBgColor);
-                        statusBarColorView.setVisibility(View.VISIBLE);
-                    }
-
-                    // Fix AppBarLayout position
-                    ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) appBarLayout.getLayoutParams();
-                    params.topMargin = statusBarHeight;
-                    appBarLayout.setLayoutParams(params);
-                    appBarLayout.setBackgroundColor(finalBgColor);
-                });
-            }
-        }
-
-        // Apply system insets to WebView (compatible with all Android versions)
-        ViewCompat.setOnApplyWindowInsetsListener(
-                _webView,
-                (v, windowInsets) -> {
-                    Insets insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());
-                    Boolean keyboardVisible = windowInsets.isVisible(WindowInsetsCompat.Type.ime());
-
-                    ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) v.getLayoutParams();
-
-                    // Apply margins based on Android version
-                    if (isAndroid15Plus) {
-                        // Android 15+ specific handling
-                        if (keyboardVisible) {
-                            mlp.bottomMargin = 0;
-                        } else {
-                            mlp.bottomMargin = insets.bottom;
-                        }
-                        // On Android 15+, don't add top margin as it's handled by AppBarLayout
-                        mlp.topMargin = 0;
-                    } else {
-                        // Original behavior for older Android versions
-                        mlp.topMargin = insets.top;
-                        mlp.bottomMargin = insets.bottom;
-                    }
-
-                    // These stay the same for all Android versions
-                    mlp.leftMargin = insets.left;
-                    mlp.rightMargin = insets.right;
-                    v.setLayoutParams(mlp);
-
-                    return WindowInsetsCompat.CONSUMED;
-                }
-        );
-
-        // Handle window decoration - version-specific window settings
-        if (getWindow() != null) {
-            if (isAndroid15Plus) {
-                // Only for Android 15+: Set window to draw behind status bar
-                getWindow().setDecorFitsSystemWindows(false);
-                getWindow().setStatusBarColor(Color.TRANSPARENT);
-
-                // Set status bar text color
-                int backgroundColor;
-                if (_options.getToolbarColor() != null && !_options.getToolbarColor().isEmpty()) {
-                    try {
-                        backgroundColor = Color.parseColor(_options.getToolbarColor());
-                        boolean isDarkBackground = isDarkColor(backgroundColor);
-                        WindowInsetsControllerCompat controller = new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
-                        controller.setAppearanceLightStatusBars(!isDarkBackground);
-                    } catch (IllegalArgumentException e) {
-                        // Ignore color parsing errors
-                    }
-                }
-            } else if (Build.VERSION.SDK_INT >= 30) {
-                // Android 11-14: Use original behavior
-                WindowInsetsControllerCompat controller = new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
-
-                // Original behavior for status bar color
-                if (_options.getToolbarColor() != null && !_options.getToolbarColor().isEmpty()) {
-                    try {
-                        int toolbarColor = Color.parseColor(_options.getToolbarColor());
-                        getWindow().setStatusBarColor(toolbarColor);
-
-                        boolean isDarkBackground = isDarkColor(toolbarColor);
-                        controller.setAppearanceLightStatusBars(!isDarkBackground);
-                    } catch (IllegalArgumentException e) {
-                        // Ignore color parsing errors
-                    }
-                }
-            } else {
-                // Pre-Android 11: Original behavior with deprecated flags
-                getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
-
-                // Apply original status bar color logic
-                if (_options.getToolbarColor() != null && !_options.getToolbarColor().isEmpty()) {
-                    try {
-                        int toolbarColor = Color.parseColor(_options.getToolbarColor());
-                        getWindow().setStatusBarColor(toolbarColor);
-                    } catch (IllegalArgumentException e) {
-                        // Ignore color parsing errors
-                    }
-                }
-            }
-        }
-    }
 
     public void postMessageToJS(Object detail) {
         if (_webView != null) {
