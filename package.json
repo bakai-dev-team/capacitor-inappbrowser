@@ -1,6 +1,6 @@
 {
   "name": "@capgo/inappbrowser",
-  "version": "7.0.6",
+  "version": "7.0.7",
   "description": "Capacitor plugin in app browser",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
@@ -68,7 +68,7 @@
     "husky": "^9.1.7"
   },
   "peerDependencies": {
-    "@capacitor/core": "^7.0.0"
+    "@capacitor/core": ">=7.0.0"
   },
   "eslintConfig": {
     "extends": "@ionic/eslint-config/recommended"
