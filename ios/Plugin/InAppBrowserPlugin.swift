@@ -75,6 +75,11 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
         })
     }
 
+    func cleanupPresentedBrowser() {
+        self.webViewController = nil
+        self.navigationWebViewController = nil
+    }
+
     @objc func clearAllCookies(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             let dataStore = WKWebsiteDataStore.default()
@@ -799,14 +804,12 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
             guard let self = self else { return }
             
             if let webViewController = self.webViewController {
-                webViewController.closeView()
-                self.webViewController = nil
-            }
-            
-            if let navigationController = self.navigationWebViewController {
+                webViewController.closeView { _ in
+                    call.resolve()
+                }
+            } else if let navigationController = self.navigationWebViewController {
                 navigationController.dismiss(animated: true) {
-                    self.navigationWebViewController = nil
-                    self.notifyListeners("closeEvent", data: ["url": self.webViewController?.url?.absoluteString ?? ""])
+                    self.cleanupPresentedBrowser()
                     call.resolve()
                 }
             } else {

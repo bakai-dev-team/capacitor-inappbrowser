@@ -275,6 +275,10 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
     fileprivate var previousToolbarState: (tintColor: UIColor, hidden: Bool) = (.black, false)
 
     fileprivate var originalUserAgent: String?
+    fileprivate var isEstimatedProgressObserved = false
+    fileprivate var isTitleObserved = false
+    fileprivate var isURLObserved = false
+    fileprivate var isClosingView = false
 
     fileprivate lazy var backBarButtonItem: UIBarButtonItem = {
         let navBackImage = UIImage(systemName: "chevron.backward")?.withRenderingMode(.alwaysTemplate)
@@ -378,11 +382,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
     var capableWebView: WKWebView? { return webView }
 
     deinit {
-        webView?.removeObserver(self, forKeyPath: estimatedProgressKeyPath)
-        if websiteTitleInNavigationBar {
-            webView?.removeObserver(self, forKeyPath: titleKeyPath)
-        }
-        webView?.removeObserver(self, forKeyPath: #keyPath(WKWebView.url))
+        removeWebViewObserversIfNeeded()
     }
 
     override open func viewDidDisappear(_ animated: Bool) {
@@ -697,10 +697,13 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
         webView.isMultipleTouchEnabled = true
 
         webView.addObserver(self, forKeyPath: estimatedProgressKeyPath, options: .new, context: nil)
+        isEstimatedProgressObserved = true
         if websiteTitleInNavigationBar {
             webView.addObserver(self, forKeyPath: titleKeyPath, options: .new, context: nil)
+            isTitleObserved = true
         }
         webView.addObserver(self, forKeyPath: #keyPath(WKWebView.url), options: .new, context: nil)
+        isURLObserved = true
 
         if !self.blankNavigationTab {
             self.view = webView
@@ -947,7 +950,6 @@ fileprivate extension WKWebViewController {
         if !(self.navigationController?.navigationBar.isHidden)! {
             self.progressView?.frame.origin.y = CGFloat((self.navigationController?.navigationBar.frame.height)!)
             self.navigationController?.navigationBar.addSubview(self.progressView!)
-            webView?.addObserver(self, forKeyPath: #keyPath(WKWebView.estimatedProgress), options: .new, context: nil)
         }
     }
 
@@ -1164,31 +1166,47 @@ fileprivate extension WKWebViewController {
     }
 
     public func closeView() {
+        closeView(completion: nil)
+    }
+
+    public func closeView(completion: ((Bool) -> Void)?) {
         print("[InAppBrowser] Starting closeView")
+
+        if isClosingView {
+            completion?(false)
+            return
+        }
 
         var canDismiss = true
         if let url = self.source?.url {
             canDismiss = delegate?.webViewController?(self, canDismiss: url) ?? true
         }
         if canDismiss {
+            isClosingView = true
             print("[InAppBrowser] Proceeding with dismissal")
             let currentUrl = webView?.url?.absoluteString ?? ""
             self.capBrowserPlugin?.notifyListeners("closeEvent", data: ["url": currentUrl])
             cleanupWebView()
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
+                let finishDismissal: () -> Void = { [weak self] in
+                    self?.capBrowserPlugin?.cleanupPresentedBrowser()
+                    completion?(true)
+                }
                 if let presentingViewController = self.presentingViewController {
                     print("[InAppBrowser] Dismissing from presenting view controller")
-                    presentingViewController.dismiss(animated: true, completion: nil)
+                    presentingViewController.dismiss(animated: true, completion: finishDismissal)
                 } else if let navigationController = self.navigationController {
                     print("[InAppBrowser] Dismissing from navigation controller")
-                    navigationController.dismiss(animated: true, completion: nil)
+                    navigationController.dismiss(animated: true, completion: finishDismissal)
                 } else {
                     print("[InAppBrowser] No presenting or navigation controller found")
+                    finishDismissal()
                 }
             }
         } else {
             print("[InAppBrowser] Dismissal cancelled by delegate")
+            completion?(false)
         }
     }
 
@@ -1242,11 +1260,7 @@ fileprivate extension WKWebViewController {
         }
         webView.stopLoading()
 
-        webView.removeObserver(self, forKeyPath: estimatedProgressKeyPath)
-        if websiteTitleInNavigationBar {
-            webView.removeObserver(self, forKeyPath: titleKeyPath)
-        }
-        webView.removeObserver(self, forKeyPath: #keyPath(WKWebView.url))
+        removeWebViewObserversIfNeeded()
 
         // Снимаем все user scripts и handlers, включая добавленные для Clipboard/Vibrate
         let ucc = webView.configuration.userContentController
@@ -1266,6 +1280,23 @@ fileprivate extension WKWebViewController {
         ) { [weak self] in
             print("[InAppBrowser] Cache cleared")
             self?.webView = nil
+        }
+    }
+
+    private func removeWebViewObserversIfNeeded() {
+        guard let webView = self.webView else { return }
+
+        if isEstimatedProgressObserved {
+            webView.removeObserver(self, forKeyPath: estimatedProgressKeyPath)
+            isEstimatedProgressObserved = false
+        }
+        if isTitleObserved {
+            webView.removeObserver(self, forKeyPath: titleKeyPath)
+            isTitleObserved = false
+        }
+        if isURLObserved {
+            webView.removeObserver(self, forKeyPath: #keyPath(WKWebView.url))
+            isURLObserved = false
         }
     }
 }
