@@ -31,6 +31,16 @@ public struct WKWebViewCredentials {
     var password: String
 }
 
+final class InAppBrowserNavigationController: UINavigationController {
+    override var childForStatusBarStyle: UIViewController? {
+        topViewController
+    }
+
+    override var childForStatusBarHidden: UIViewController? {
+        topViewController
+    }
+}
+
 @objc public protocol WKWebViewControllerDelegate {
     @objc optional func webViewController(_ controller: WKWebViewController, canDismiss url: URL) -> Bool
 
@@ -209,6 +219,18 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
         return UIApplication.shared.windows.first?.windowScene?.statusBarManager?.statusBarFrame.height ?? 0
     }
 
+    private func disableLiquidGlassIfNeeded(for barButtonItem: UIBarButtonItem) {
+        if #available(iOS 26.0, *) {
+            barButtonItem.hidesSharedBackground = true
+        }
+    }
+
+    private func disableLiquidGlassIfNeeded(for barButtonItems: [UIBarButtonItem]) {
+        for barButtonItem in barButtonItems {
+            disableLiquidGlassIfNeeded(for: barButtonItem)
+        }
+    }
+
     open func setupStatusBarBackground(color: UIColor) {
         statusBarBackgroundView?.removeFromSuperview()
         statusBarBackgroundView = UIView()
@@ -233,7 +255,10 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
     override open var preferredStatusBarStyle: UIStatusBarStyle {
         return statusBarStyle
     }
-    open func updateStatusBarStyle() { setNeedsStatusBarAppearanceUpdate() }
+    open func updateStatusBarStyle() {
+        navigationController?.setNeedsStatusBarAppearanceUpdate()
+        setNeedsStatusBarAppearanceUpdate()
+    }
 
     open var backBarButtonItemImage: UIImage?
     open var forwardBarButtonItemImage: UIImage?
@@ -257,6 +282,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
         if let tintColor = self.tintColor ?? self.navigationController?.navigationBar.tintColor {
             barButtonItem.tintColor = tintColor
         }
+        self.disableLiquidGlassIfNeeded(for: barButtonItem)
         return barButtonItem
     }()
 
@@ -266,23 +292,30 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
         if let tintColor = self.tintColor ?? self.navigationController?.navigationBar.tintColor {
             barButtonItem.tintColor = tintColor
         }
+        self.disableLiquidGlassIfNeeded(for: barButtonItem)
         return barButtonItem
     }()
 
     fileprivate lazy var reloadBarButtonItem: UIBarButtonItem = {
+        let barButtonItem: UIBarButtonItem
         if let image = reloadBarButtonItemImage {
-            return UIBarButtonItem(image: image, style: .plain, target: self, action: #selector(reloadDidClick(sender:)))
+            barButtonItem = UIBarButtonItem(image: image, style: .plain, target: self, action: #selector(reloadDidClick(sender:)))
         } else {
-            return UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(reloadDidClick(sender:)))
+            barButtonItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(reloadDidClick(sender:)))
         }
+        self.disableLiquidGlassIfNeeded(for: barButtonItem)
+        return barButtonItem
     }()
 
     fileprivate lazy var stopBarButtonItem: UIBarButtonItem = {
+        let barButtonItem: UIBarButtonItem
         if let image = stopBarButtonItemImage {
-            return UIBarButtonItem(image: image, style: .plain, target: self, action: #selector(stopDidClick(sender:)))
+            barButtonItem = UIBarButtonItem(image: image, style: .plain, target: self, action: #selector(stopDidClick(sender:)))
         } else {
-            return UIBarButtonItem(barButtonSystemItem: .stop, target: self, action: #selector(stopDidClick(sender:)))
+            barButtonItem = UIBarButtonItem(barButtonSystemItem: .stop, target: self, action: #selector(stopDidClick(sender:)))
         }
+        self.disableLiquidGlassIfNeeded(for: barButtonItem)
+        return barButtonItem
     }()
 
     fileprivate lazy var activityBarButtonItem: UIBarButtonItem = {
@@ -295,6 +328,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
                 button.tintColor = tintColor
             }
             print("[DEBUG] Created activity button with custom image")
+            self.disableLiquidGlassIfNeeded(for: button)
             return button
         } else {
             let button = UIBarButtonItem(barButtonSystemItem: .action,
@@ -304,6 +338,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
                 button.tintColor = tintColor
             }
             print("[DEBUG] Created activity button with system action icon")
+            self.disableLiquidGlassIfNeeded(for: button)
             return button
         }
     }()
@@ -317,6 +352,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
             } else {
                 barButtonItem.tintColor = self.tintColor ?? self.navigationController?.navigationBar.tintColor ?? .white
             }
+            self.disableLiquidGlassIfNeeded(for: barButtonItem)
             return barButtonItem
         } else {
             let xImage = UIImage(systemName: "xmark")?.withRenderingMode(.alwaysTemplate)
@@ -326,6 +362,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
             } else {
                 barButtonItem.tintColor = self.tintColor ?? self.navigationController?.navigationBar.tintColor ?? .white
             }
+            self.disableLiquidGlassIfNeeded(for: barButtonItem)
             return barButtonItem
         }
     }()
@@ -378,9 +415,11 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
         doneBarButtonItem.tintColor = buttonTintColor
 
         if let leftItems = navigationItem.leftBarButtonItems {
+            disableLiquidGlassIfNeeded(for: leftItems)
             for item in leftItems { item.tintColor = buttonTintColor }
         }
         if let rightItems = navigationItem.rightBarButtonItems {
+            disableLiquidGlassIfNeeded(for: rightItems)
             for item in rightItems { item.tintColor = buttonTintColor }
         }
 
@@ -393,6 +432,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
                                              target: self,
                                              action: #selector(buttonNearDoneDidClick))
             buttonItem.tintColor = buttonTintColor
+            disableLiquidGlassIfNeeded(for: buttonItem)
             navigationItem.rightBarButtonItems?.append(buttonItem)
         }
     }
@@ -778,6 +818,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
                 if let tintColor = self.tintColor ?? self.navigationController?.navigationBar.tintColor {
                     buttonItem.tintColor = tintColor
                 }
+                disableLiquidGlassIfNeeded(for: buttonItem)
                 if navigationItem.rightBarButtonItems == nil {
                     navigationItem.rightBarButtonItems = [buttonItem]
                 } else {
@@ -969,6 +1010,7 @@ fileprivate extension WKWebViewController {
                 if let tintColor = self.tintColor ?? self.navigationController?.navigationBar.tintColor {
                     buttonItem.tintColor = tintColor
                 }
+                disableLiquidGlassIfNeeded(for: buttonItem)
                 if rightBarButtons.isEmpty && doneBarButtonItemPosition == .right {
                     rightBarButtons.append(doneBarButtonItem)
                 }
@@ -979,6 +1021,8 @@ fileprivate extension WKWebViewController {
             }
         }
 
+        disableLiquidGlassIfNeeded(for: navigationItem.leftBarButtonItems ?? [])
+        disableLiquidGlassIfNeeded(for: rightBarButtons)
         navigationItem.rightBarButtonItems = rightBarButtons
         updateButtonTintColors()
     }
@@ -1180,7 +1224,9 @@ fileprivate extension WKWebViewController {
             navBar.tintColor = buttonTintColor
             navBar.titleTextAttributes = [NSAttributedString.Key.foregroundColor: buttonTintColor]
             for item in navBar.items ?? [] {
-                for barButton in (item.leftBarButtonItems ?? []) + (item.rightBarButtonItems ?? []) {
+                let barButtons = (item.leftBarButtonItems ?? []) + (item.rightBarButtonItems ?? [])
+                disableLiquidGlassIfNeeded(for: barButtons)
+                for barButton in barButtons {
                     barButton.tintColor = buttonTintColor
                 }
             }

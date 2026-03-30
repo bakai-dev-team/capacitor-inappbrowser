@@ -500,7 +500,8 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
                 webViewController.closeModalCancel = self.closeModalCancel ?? closeModalCancel
             }
 
-            self.navigationWebViewController = UINavigationController.init(rootViewController: webViewController)
+            self.navigationWebViewController = InAppBrowserNavigationController(rootViewController: webViewController)
+            self.navigationWebViewController?.modalPresentationCapturesStatusBarAppearance = true
             self.navigationWebViewController?.navigationBar.isTranslucent = false
             self.navigationWebViewController?.toolbar.isTranslucent = false
 
@@ -758,7 +759,8 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
             webViewController.capBrowserPlugin = self
             webViewController.hasDynamicTitle = true
 
-            self.navigationWebViewController = UINavigationController.init(rootViewController: webViewController)
+            self.navigationWebViewController = InAppBrowserNavigationController(rootViewController: webViewController)
+            self.navigationWebViewController?.modalPresentationCapturesStatusBarAppearance = true
             self.navigationWebViewController?.navigationBar.isTranslucent = false
 
             // Ensure no lines or borders appear by default
