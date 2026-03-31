@@ -220,8 +220,9 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
     }
 
     private func disableLiquidGlassIfNeeded(for barButtonItem: UIBarButtonItem) {
-        if #available(iOS 26.0, *) {
-            barButtonItem.hidesSharedBackground = true
+        let hidesSharedBackgroundSelector = NSSelectorFromString("setHidesSharedBackground:")
+        if #available(iOS 26.0, *), barButtonItem.responds(to: hidesSharedBackgroundSelector) {
+            barButtonItem.setValue(true, forKey: "hidesSharedBackground")
         }
     }
 
