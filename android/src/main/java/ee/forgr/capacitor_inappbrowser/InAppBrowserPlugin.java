@@ -64,6 +64,7 @@ public class InAppBrowserPlugin
   implements PermissionHandler {
 
   public static final String CUSTOM_TAB_PACKAGE_NAME = "com.android.chrome"; // Change when in stable
+  private static final int INITIAL_PERMISSIONS_REQUEST_CODE = 28211;
   private CustomTabsClient customTabsClient;
   private CustomTabsSession currentSession;
   private WebViewDialog webViewDialog = null;
@@ -107,7 +108,7 @@ public class InAppBrowserPlugin
       requestPermissionForAlias(
         "microphone",
         null,
-        "microphonePermissionCallback"
+        "microphoneOnlyPermissionCallback"
       );
     } else {
       grantMicrophonePermission();
@@ -124,6 +125,21 @@ public class InAppBrowserPlugin
   }
 
   @PermissionCallback
+  private void microphoneOnlyPermissionCallback(PluginCall call) {
+    if (getPermissionState("microphone") == PermissionState.GRANTED) {
+      grantMicrophonePermission();
+    } else {
+      if (currentPermissionRequest != null) {
+        currentPermissionRequest.deny();
+        currentPermissionRequest = null;
+      }
+      if (call != null) {
+        call.reject("Microphone permission is required");
+      }
+    }
+  }
+
+  @PermissionCallback
   private void microphonePermissionCallback(PluginCall call) {
     if (getPermissionState("microphone") == PermissionState.GRANTED) {
       grantCameraAndMicrophonePermission();
@@ -134,6 +150,63 @@ public class InAppBrowserPlugin
       }
       if (call != null) {
         call.reject("Microphone permission is required");
+      }
+    }
+  }
+
+  @Override
+  public void handleCameraAndMicrophonePermissionRequest(
+    PermissionRequest request
+  ) {
+    this.currentPermissionRequest = request;
+    if (getPermissionState("camera") != PermissionState.GRANTED) {
+      requestPermissionForAlias(
+        "camera",
+        null,
+        "cameraAndMicrophoneCameraPermissionCallback"
+      );
+    } else if (getPermissionState("microphone") != PermissionState.GRANTED) {
+      requestPermissionForAlias(
+        "microphone",
+        null,
+        "cameraAndMicrophoneMicrophonePermissionCallback"
+      );
+    } else {
+      grantCameraAndMicrophonePermission();
+    }
+  }
+
+  @PermissionCallback
+  private void cameraAndMicrophoneCameraPermissionCallback(PluginCall call) {
+    if (getPermissionState("camera") == PermissionState.GRANTED) {
+      if (getPermissionState("microphone") != PermissionState.GRANTED) {
+        requestPermissionForAlias(
+          "microphone",
+          null,
+          "cameraAndMicrophoneMicrophonePermissionCallback"
+        );
+      } else {
+        grantCameraAndMicrophonePermission();
+      }
+    } else {
+      if (currentPermissionRequest != null) {
+        currentPermissionRequest.deny();
+        currentPermissionRequest = null;
+      }
+    }
+  }
+
+  @PermissionCallback
+  private void cameraAndMicrophoneMicrophonePermissionCallback(PluginCall call) {
+    if (
+      getPermissionState("camera") == PermissionState.GRANTED &&
+      getPermissionState("microphone") == PermissionState.GRANTED
+    ) {
+      grantCameraAndMicrophonePermission();
+    } else {
+      if (currentPermissionRequest != null) {
+        currentPermissionRequest.deny();
+        currentPermissionRequest = null;
       }
     }
   }
@@ -430,6 +503,7 @@ public class InAppBrowserPlugin
     }
     currentUrl = url;
     final Options options = new Options();
+    String[] requestedPermissions = extractPermissions(call);
     options.setUrl(url);
     options.setHeaders(call.getObject("headers"));
     options.setCredentials(call.getObject("credentials"));
@@ -455,19 +529,8 @@ public class InAppBrowserPlugin
     options.setIgnoreUntrustedSSLError(
       Boolean.TRUE.equals(call.getBoolean("ignoreUntrustedSSLError", false))
     );
-
-    // Request camera permission before opening WebView
-    Activity activity = getActivity();
-    if (activity != null) {
-      if (ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) 
-          != PackageManager.PERMISSION_GRANTED) {
-        ActivityCompat.requestPermissions(
-          activity,
-          new String[]{Manifest.permission.CAMERA},
-          WebViewDialog.CAMERA_PERMISSION_REQUEST_CODE
-        );
-      }
-    }
+    options.setPermissions(requestedPermissions);
+    requestInitialPermissionsIfNeeded(requestedPermissions);
 
     // Set text zoom if specified in options (default is 100)
     Integer textZoom = call.getInt("textZoom");
@@ -561,22 +624,6 @@ public class InAppBrowserPlugin
     options.setPreventDeeplink(
       Boolean.TRUE.equals(call.getBoolean("preventDeeplink", false))
     );
-
-    // Extract permissions from JSObject
-    JSArray permissionsArray = call.getArray("permissions");
-    if (permissionsArray != null) {
-      String[] permissions = new String[permissionsArray.length()];
-      for (int i = 0; i < permissionsArray.length(); i++) {
-        try {
-          permissions[i] = permissionsArray.getString(i);
-        } catch (JSONException e) {
-          Log.e("InAppBrowser", "Error getting permission at index " + i + ": " + e.getMessage());
-          permissions[i] = ""; // Set empty string as fallback
-        }
-      }
-      options.setPermissions(permissions);
-      Log.d("InAppBrowser", "Permissions extracted: " + Arrays.toString(permissions));
-    }
 
     // Validate preShowScript requires isPresentAfterPageLoad
     if (
@@ -944,7 +991,117 @@ public class InAppBrowserPlugin
     super.handleOnDestroy();
   }
 
+  private String[] extractPermissions(PluginCall call) {
+    JSArray permissionsArray = call.getArray("permissions");
+    if (permissionsArray == null) {
+      return new String[0];
+    }
+
+    String[] permissions = new String[permissionsArray.length()];
+    for (int i = 0; i < permissionsArray.length(); i++) {
+      try {
+        permissions[i] = permissionsArray.getString(i);
+      } catch (JSONException e) {
+        Log.e(
+          "InAppBrowser",
+          "Error getting permission at index " + i + ": " + e.getMessage()
+        );
+        permissions[i] = "";
+      }
+    }
+
+    Log.d(
+      "InAppBrowser",
+      "Permissions extracted: " + Arrays.toString(permissions)
+    );
+    return permissions;
+  }
+
+  private void requestInitialPermissionsIfNeeded(String[] permissions) {
+    Activity activity = getActivity();
+    if (activity == null || permissions == null || permissions.length == 0) {
+      return;
+    }
+
+    ArrayList<String> missingPermissions = new ArrayList<>();
+    for (String permission : permissions) {
+      if (permission == null) {
+        continue;
+      }
+
+      switch (permission.toLowerCase()) {
+        case "camera":
+          addIfMissingAndNotGranted(
+            activity,
+            missingPermissions,
+            Manifest.permission.CAMERA
+          );
+          break;
+        case "microphone":
+          addIfMissingAndNotGranted(
+            activity,
+            missingPermissions,
+            Manifest.permission.RECORD_AUDIO
+          );
+          break;
+        case "location":
+        case "geolocation":
+          boolean fineGranted =
+            ContextCompat.checkSelfPermission(
+              activity,
+              Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED;
+          boolean coarseGranted =
+            ContextCompat.checkSelfPermission(
+              activity,
+              Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED;
+          if (!fineGranted && !coarseGranted) {
+            addIfMissingAndNotGranted(
+              activity,
+              missingPermissions,
+              Manifest.permission.ACCESS_FINE_LOCATION
+            );
+            addIfMissingAndNotGranted(
+              activity,
+              missingPermissions,
+              Manifest.permission.ACCESS_COARSE_LOCATION
+            );
+          }
+          break;
+        default:
+          break;
+      }
+    }
+
+    if (!missingPermissions.isEmpty()) {
+      ActivityCompat.requestPermissions(
+        activity,
+        missingPermissions.toArray(new String[0]),
+        INITIAL_PERMISSIONS_REQUEST_CODE
+      );
+    }
+  }
+
+  private void addIfMissingAndNotGranted(
+    Activity activity,
+    ArrayList<String> missingPermissions,
+    String permission
+  ) {
+    if (
+      ContextCompat.checkSelfPermission(activity, permission) !=
+      PackageManager.PERMISSION_GRANTED &&
+      !missingPermissions.contains(permission)
+    ) {
+      missingPermissions.add(permission);
+    }
+  }
+
   public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+    if (requestCode == INITIAL_PERMISSIONS_REQUEST_CODE) {
+      return;
+    }
+
     if (requestCode == WebViewDialog.CAMERA_PERMISSION_REQUEST_CODE) {
       if (currentPermissionRequest != null) {
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {

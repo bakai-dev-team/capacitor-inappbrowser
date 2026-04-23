@@ -56,6 +56,7 @@ export enum Permissions {
   CAMERA = 'camera',
   MICROPHONE = 'microphone',
   LOCATION = 'location',
+  GEOLOCATION = 'geolocation',
   NOTIFICATIONS = 'notifications',
   CONTACTS = 'contacts',
   CALENDAR = 'calendar',

@@ -4,5 +4,6 @@ import android.webkit.PermissionRequest;
 
 public interface PermissionHandler {
     void handleCameraPermissionRequest(PermissionRequest request);
+    void handleCameraAndMicrophonePermissionRequest(PermissionRequest request);
     void handleMicrophonePermissionRequest(PermissionRequest request);
-} 
+}

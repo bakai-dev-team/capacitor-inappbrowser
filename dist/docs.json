@@ -1253,6 +1253,12 @@
           "docs": ""
         },
         {
+          "name": "GEOLOCATION",
+          "value": "'geolocation'",
+          "tags": [],
+          "docs": ""
+        },
+        {
           "name": "NOTIFICATIONS",
           "value": "'notifications'",
           "tags": [],

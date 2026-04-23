@@ -39,6 +39,7 @@ var capacitorInAppBrowser = (function (exports, core) {
         Permissions["CAMERA"] = "camera";
         Permissions["MICROPHONE"] = "microphone";
         Permissions["LOCATION"] = "location";
+        Permissions["GEOLOCATION"] = "geolocation";
         Permissions["NOTIFICATIONS"] = "notifications";
         Permissions["CONTACTS"] = "contacts";
         Permissions["CALENDAR"] = "calendar";

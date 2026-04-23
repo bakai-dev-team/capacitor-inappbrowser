@@ -661,6 +661,7 @@ Construct a type with a set of properties K of type T
 | **`CAMERA`**        | <code>'camera'</code>        |
 | **`MICROPHONE`**    | <code>'microphone'</code>    |
 | **`LOCATION`**      | <code>'location'</code>      |
+| **`GEOLOCATION`**   | <code>'geolocation'</code>   |
 | **`NOTIFICATIONS`** | <code>'notifications'</code> |
 | **`CONTACTS`**      | <code>'contacts'</code>      |
 | **`CALENDAR`**      | <code>'calendar'</code>      |

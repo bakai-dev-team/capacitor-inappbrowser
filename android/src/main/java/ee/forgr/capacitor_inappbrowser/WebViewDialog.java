@@ -1782,9 +1782,35 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
         @Override
         public void onPermissionRequest(PermissionRequest request) {
-            // Раз уже дал пермишены приложению — сразу выдаём их WebView
+            String[] resources = request.getResources();
+            boolean needsCamera = false;
+            boolean needsMicrophone = false;
+
+            for (String resource : resources) {
+                if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
+                    needsCamera = true;
+                } else if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
+                    needsMicrophone = true;
+                }
+            }
+
+            if (needsCamera && needsMicrophone) {
+                permissionHandler.handleCameraAndMicrophonePermissionRequest(request);
+                return;
+            }
+
+            if (needsCamera) {
+                permissionHandler.handleCameraPermissionRequest(request);
+                return;
+            }
+
+            if (needsMicrophone) {
+                permissionHandler.handleMicrophonePermissionRequest(request);
+                return;
+            }
+
             try {
-                request.grant(request.getResources());
+                request.grant(resources);
             } catch (Throwable t) {
                 request.deny();
             }
