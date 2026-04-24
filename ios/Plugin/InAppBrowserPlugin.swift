@@ -362,7 +362,7 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
         let credentials = self.readCredentials(call)
         
         // Get permissions array
-        let permissions = (call.getArray("permissions", []) as? [Any])?.compactMap { $0 as? String } ?? []
+        let permissions = call.getArray("permissions", []).compactMap { $0 as? String }
 
         DispatchQueue.main.async {
             guard let url = URL(string: urlString) else {
@@ -842,6 +842,7 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func appDidBecomeActive(_ notification: NSNotification) {
         self.hidePrivacyScreen()
+        self.webViewController?.resumePendingPermissionFlowIfNeeded()
     }
 
     @objc func appWillResignActive(_ notification: NSNotification) {

@@ -31,6 +31,37 @@ public struct WKWebViewCredentials {
     var password: String
 }
 
+private enum BrowserPermission: Hashable {
+    case camera
+    case microphone
+    case location
+    case notifications
+    case contacts
+    case calendar
+    case gallery
+
+    init?(rawPermission: String) {
+        switch rawPermission.lowercased() {
+        case "camera":
+            self = .camera
+        case "microphone":
+            self = .microphone
+        case "location", "geolocation", "geoloacation":
+            self = .location
+        case "notifications":
+            self = .notifications
+        case "contacts":
+            self = .contacts
+        case "calendar":
+            self = .calendar
+        case "gallery":
+            self = .gallery
+        default:
+            return nil
+        }
+    }
+}
+
 final class InAppBrowserNavigationController: UINavigationController {
     override var childForStatusBarStyle: UIViewController? {
         topViewController
@@ -60,7 +91,7 @@ extension Dictionary {
     }
 }
 
-open class WKWebViewController: UIViewController, WKScriptMessageHandler {
+open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLocationManagerDelegate {
 
     public init() {
         super.init(nibName: nil, bundle: nil)
@@ -149,9 +180,186 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
 
     private var isInjecting = false
     private let injectionQueue = DispatchQueue(label: "com.inappbrowser.injection")
+    private var locationPermissionManager: CLLocationManager?
+    private var permissionQueue: [BrowserPermission] = []
+    private var currentPermissionRequest: BrowserPermission?
+    private var permissionAwaitingSettingsReturn: BrowserPermission?
+    private var shouldStartPermissionFlowWhenVisible = false
+    private var didPrepareInitialPermissionFlow = false
 
     // Add spinner property
     private var loadingSpinner: UIActivityIndicatorView?
+
+    private func normalizedPermissions() -> [BrowserPermission] {
+        var normalized: [BrowserPermission] = []
+        var seen = Set<BrowserPermission>()
+
+        for permission in permissions {
+            guard let browserPermission = BrowserPermission(rawPermission: permission) else {
+                continue
+            }
+
+            if seen.insert(browserPermission).inserted {
+                normalized.append(browserPermission)
+            }
+        }
+
+        return normalized
+    }
+
+    private func prepareInitialPermissionFlowIfNeeded() {
+        guard !didPrepareInitialPermissionFlow else { return }
+
+        let normalized = normalizedPermissions()
+        guard !normalized.isEmpty else { return }
+
+        didPrepareInitialPermissionFlow = true
+        permissionQueue = normalized
+        shouldStartPermissionFlowWhenVisible = true
+        startPermissionFlowIfPossible()
+    }
+
+    internal func startPermissionFlowIfPossible() {
+        guard shouldStartPermissionFlowWhenVisible else { return }
+        guard isViewLoaded, view.window != nil else { return }
+
+        shouldStartPermissionFlowWhenVisible = false
+        processNextPermissionIfNeeded()
+    }
+
+    private func processNextPermissionIfNeeded() {
+        guard currentPermissionRequest == nil else { return }
+        guard permissionAwaitingSettingsReturn == nil else { return }
+        guard !permissionQueue.isEmpty else { return }
+
+        let nextPermission = permissionQueue.removeFirst()
+        currentPermissionRequest = nextPermission
+
+        switch nextPermission {
+        case .camera:
+            handleCameraPermission()
+        case .microphone:
+            handleMicrophonePermission()
+        case .location:
+            handleLocationPermission()
+        case .notifications:
+            handleNotificationPermission()
+        case .contacts:
+            handleContactsPermission()
+        case .calendar:
+            handleCalendarPermission()
+        case .gallery:
+            handleGalleryPermission()
+        }
+    }
+
+    private func finishCurrentPermissionRequest() {
+        currentPermissionRequest = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.processNextPermissionIfNeeded()
+        }
+    }
+
+    private func openSettings(for permission: BrowserPermission) {
+        permissionAwaitingSettingsReturn = permission
+
+        guard let settingsUrl = URL(string: UIApplication.openSettingsURLString) else {
+            permissionAwaitingSettingsReturn = nil
+            finishCurrentPermissionRequest()
+            return
+        }
+
+        UIApplication.shared.open(settingsUrl, options: [:]) { [weak self] success in
+            guard let self = self else { return }
+
+            if !success {
+                self.permissionAwaitingSettingsReturn = nil
+                self.finishCurrentPermissionRequest()
+            }
+        }
+    }
+
+    private func presentSettingsAlert(title: String, message: String, permission: BrowserPermission) {
+        let alertController = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alertController.addAction(UIAlertAction(title: "Открыть настройки", style: .default) { [weak self] _ in
+            self?.openSettings(for: permission)
+        })
+        alertController.addAction(UIAlertAction(title: "Отмена", style: .cancel) { [weak self] _ in
+            self?.finishCurrentPermissionRequest()
+        })
+        self.present(alertController, animated: true)
+    }
+
+    internal func resumePendingPermissionFlowIfNeeded() {
+        guard let pendingPermission = permissionAwaitingSettingsReturn else { return }
+
+        permissionAwaitingSettingsReturn = nil
+
+        switch pendingPermission {
+        case .camera:
+            if AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
+                capBrowserPlugin?.notifyListeners("cameraAccessGranted", data: [:])
+            }
+        case .location:
+            let status = currentLocationAuthorizationStatus()
+            if status == .authorizedAlways || status == .authorizedWhenInUse {
+                notifyLocationPermissionGranted()
+            }
+        case .microphone, .notifications, .contacts, .calendar, .gallery:
+            break
+        }
+
+        finishCurrentPermissionRequest()
+    }
+
+    private func currentLocationAuthorizationStatus() -> CLAuthorizationStatus {
+        if #available(iOS 14.0, *) {
+            return locationPermissionManager?.authorizationStatus ?? CLLocationManager().authorizationStatus
+        } else {
+            return CLLocationManager.authorizationStatus()
+        }
+    }
+
+    private func clearLocationPermissionManager() {
+        locationPermissionManager?.delegate = nil
+        locationPermissionManager = nil
+    }
+
+    private func notifyLocationPermissionGranted() {
+        capBrowserPlugin?.notifyListeners("locationAccessGranted", data: [:])
+        capBrowserPlugin?.notifyListeners("geolocationAccessGranted", data: [:])
+    }
+
+    private func isCalendarAuthorizationGranted(_ status: EKAuthorizationStatus) -> Bool {
+        if status == .authorized {
+            return true
+        }
+
+        if #available(iOS 17.0, *) {
+            return status == .fullAccess || status == .writeOnly
+        }
+
+        return false
+    }
+
+    private func handleLocationAuthorizationChange(_ status: CLAuthorizationStatus) {
+        guard currentPermissionRequest == .location else { return }
+
+        switch status {
+        case .notDetermined:
+            return
+        case .authorizedAlways, .authorizedWhenInUse:
+            notifyLocationPermissionGranted()
+            clearLocationPermissionManager()
+            finishCurrentPermissionRequest()
+        case .restricted, .denied:
+            clearLocationPermissionManager()
+            finishCurrentPermissionRequest()
+        @unknown default:
+            clearLocationPermissionManager()
+            finishCurrentPermissionRequest()
+        }
+    }
 
     // Add method to setup spinner
     private func setupSpinner() {
@@ -806,6 +1014,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler {
 
     override open func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        startPermissionFlowIfPossible()
 
         if buttonNearDoneIcon != nil {
             let buttonExists = navigationItem.rightBarButtonItems?.contains { item in
@@ -919,8 +1128,8 @@ public extension WKWebViewController {
     }
 }
 
-// MARK: - Fileprivate Methods
-fileprivate extension WKWebViewController {
+// MARK: - Internal Methods
+extension WKWebViewController {
     var availableCookies: [HTTPCookie]? {
         return cookies?.filter { cookie in
             var result = true
@@ -1396,19 +1605,7 @@ extension WKWebViewController: WKNavigationDelegate {
         self.capBrowserPlugin?.notifyListeners("browserPageLoaded", data: [:])
 
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            for permission in self.permissions {
-                switch permission {
-                case "camera": self.handleCameraPermission()
-                case "microphone": self.handleMicrophonePermission()
-                case "location": self.handleLocationPermission()
-                case "notifications": self.handleNotificationPermission()
-                case "contacts": self.handleContactsPermission()
-                case "calendar": self.handleCalendarPermission()
-                case "gallery": self.handleGalleryPermission()
-                default: break
-                }
-            }
+            self?.prepareInitialPermissionFlowIfNeeded()
         }
     }
 
@@ -1507,75 +1704,201 @@ extension WKWebViewController: WKNavigationDelegate {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
         case .notDetermined:
-            let alertController = UIAlertController(
-                title: "Camera Access",
-                message: "This app needs access to your camera. Allow access?",
-                preferredStyle: .alert
-            )
-            alertController.addAction(UIAlertAction(title: "Allow", style: .default) { _ in
-                AVCaptureDevice.requestAccess(for: .video) { granted in
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
                     print("Camera permission granted: \(granted)")
-                    if granted { DispatchQueue.main.async { self.capBrowserPlugin?.notifyListeners("cameraAccessGranted", data: [:]) } }
+                    if granted {
+                        self?.capBrowserPlugin?.notifyListeners("cameraAccessGranted", data: [:])
+                    }
+                    self?.finishCurrentPermissionRequest()
                 }
-            })
-            alertController.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-            self.present(alertController, animated: true)
+            }
         case .restricted, .denied:
-            let alertController = UIAlertController(
+            presentSettingsAlert(
                 title: "Доступ к камере запрещен",
                 message: "Пожалуйста, включите доступ к камере в настройках устройства",
-                preferredStyle: .alert
+                permission: .camera
             )
-            alertController.addAction(UIAlertAction(title: "Открыть настройки", style: .default) { _ in
-                if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(settingsUrl)
-                }
-            })
-            alertController.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-            self.present(alertController, animated: true)
         case .authorized:
             print("Camera access already granted")
             self.capBrowserPlugin?.notifyListeners("cameraAccessGranted", data: [:])
+            finishCurrentPermissionRequest()
         @unknown default:
-            break
+            finishCurrentPermissionRequest()
         }
     }
 
     private func handleMicrophonePermission() {
-        AVAudioSession.sharedInstance().requestRecordPermission { granted in
-            DispatchQueue.main.async { if granted { self.capBrowserPlugin?.notifyListeners("microphoneAccessGranted", data: [:]) } }
+        let recordPermission = AVAudioSession.sharedInstance().recordPermission
+
+        switch recordPermission {
+        case .granted:
+            self.capBrowserPlugin?.notifyListeners("microphoneAccessGranted", data: [:])
+            finishCurrentPermissionRequest()
+        case .undetermined:
+            AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.capBrowserPlugin?.notifyListeners("microphoneAccessGranted", data: [:])
+                    }
+                    self?.finishCurrentPermissionRequest()
+                }
+            }
+        case .denied:
+            finishCurrentPermissionRequest()
+        @unknown default:
+            finishCurrentPermissionRequest()
         }
     }
 
     private func handleLocationPermission() {
-        let locationManager = CLLocationManager()
-        locationManager.requestWhenInUseAuthorization()
+        let status = currentLocationAuthorizationStatus()
+
+        switch status {
+        case .authorizedAlways, .authorizedWhenInUse:
+            notifyLocationPermissionGranted()
+            finishCurrentPermissionRequest()
+        case .notDetermined:
+            let locationManager = CLLocationManager()
+            locationManager.delegate = self
+            locationPermissionManager = locationManager
+            locationManager.requestWhenInUseAuthorization()
+        case .restricted, .denied:
+            clearLocationPermissionManager()
+            presentSettingsAlert(
+                title: "Доступ к геолокации запрещен",
+                message: "Пожалуйста, включите доступ к геолокации в настройках устройства",
+                permission: .location
+            )
+        @unknown default:
+            clearLocationPermissionManager()
+            finishCurrentPermissionRequest()
+        }
     }
 
     private func handleNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            DispatchQueue.main.async { if granted { self.capBrowserPlugin?.notifyListeners("notificationAccessGranted", data: [:]) } }
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                DispatchQueue.main.async {
+                    self?.capBrowserPlugin?.notifyListeners("notificationAccessGranted", data: [:])
+                    self?.finishCurrentPermissionRequest()
+                }
+            case .notDetermined:
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                    DispatchQueue.main.async {
+                        if granted {
+                            self?.capBrowserPlugin?.notifyListeners("notificationAccessGranted", data: [:])
+                        }
+                        self?.finishCurrentPermissionRequest()
+                    }
+                }
+            case .denied:
+                DispatchQueue.main.async {
+                    self?.finishCurrentPermissionRequest()
+                }
+            @unknown default:
+                DispatchQueue.main.async {
+                    self?.finishCurrentPermissionRequest()
+                }
+            }
         }
     }
 
     private func handleContactsPermission() {
         let store = CNContactStore()
-        store.requestAccess(for: .contacts) { granted, _ in
-            DispatchQueue.main.async { if granted { self.capBrowserPlugin?.notifyListeners("contactsAccessGranted", data: [:]) } }
+
+        switch CNContactStore.authorizationStatus(for: .contacts) {
+        case .authorized:
+            capBrowserPlugin?.notifyListeners("contactsAccessGranted", data: [:])
+            finishCurrentPermissionRequest()
+        case .limited:
+            capBrowserPlugin?.notifyListeners("contactsAccessGranted", data: [:])
+            finishCurrentPermissionRequest()
+        case .notDetermined:
+            store.requestAccess(for: .contacts) { [weak self] granted, _ in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.capBrowserPlugin?.notifyListeners("contactsAccessGranted", data: [:])
+                    }
+                    self?.finishCurrentPermissionRequest()
+                }
+            }
+        case .restricted, .denied:
+            finishCurrentPermissionRequest()
+        @unknown default:
+            finishCurrentPermissionRequest()
         }
     }
 
     private func handleCalendarPermission() {
         let eventStore = EKEventStore()
-        eventStore.requestAccess(to: .event) { granted, _ in
-            DispatchQueue.main.async { if granted { self.capBrowserPlugin?.notifyListeners("calendarAccessGranted", data: [:]) } }
+
+        let authorizationStatus = EKEventStore.authorizationStatus(for: .event)
+        if isCalendarAuthorizationGranted(authorizationStatus) {
+            capBrowserPlugin?.notifyListeners("calendarAccessGranted", data: [:])
+            finishCurrentPermissionRequest()
+            return
+        }
+
+        switch authorizationStatus {
+        case .authorized:
+            finishCurrentPermissionRequest()
+        case .fullAccess, .writeOnly:
+            finishCurrentPermissionRequest()
+        case .notDetermined:
+            eventStore.requestAccess(to: .event) { [weak self] granted, _ in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.capBrowserPlugin?.notifyListeners("calendarAccessGranted", data: [:])
+                    }
+                    self?.finishCurrentPermissionRequest()
+                }
+            }
+        case .restricted, .denied:
+            finishCurrentPermissionRequest()
+        @unknown default:
+            finishCurrentPermissionRequest()
         }
     }
 
     private func handleGalleryPermission() {
-        PHPhotoLibrary.requestAuthorization { status in
-            DispatchQueue.main.async { if status == .authorized { self.capBrowserPlugin?.notifyListeners("galleryAccessGranted", data: [:]) } }
+        let authorizationStatus: PHAuthorizationStatus
+        if #available(iOS 14, *) {
+            authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        } else {
+            authorizationStatus = PHPhotoLibrary.authorizationStatus()
         }
+
+        switch authorizationStatus {
+        case .authorized, .limited:
+            capBrowserPlugin?.notifyListeners("galleryAccessGranted", data: [:])
+            finishCurrentPermissionRequest()
+        case .notDetermined:
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
+                DispatchQueue.main.async {
+                    if status == .authorized || status == .limited {
+                        self?.capBrowserPlugin?.notifyListeners("galleryAccessGranted", data: [:])
+                    }
+                    self?.finishCurrentPermissionRequest()
+                }
+            }
+        case .restricted, .denied:
+            finishCurrentPermissionRequest()
+        @unknown default:
+            finishCurrentPermissionRequest()
+        }
+    }
+}
+
+extension WKWebViewController {
+    public func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        handleLocationAuthorizationChange(status)
+    }
+
+    @available(iOS 14.0, *)
+    public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        handleLocationAuthorizationChange(manager.authorizationStatus)
     }
 }
 
