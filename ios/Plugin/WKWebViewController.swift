@@ -461,6 +461,35 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
         }
     }
 
+    open func applyToolbarAppearance(backgroundColor: UIColor, textColor: UIColor) {
+        setupStatusBarBackground(color: backgroundColor)
+        tintColor = textColor
+
+        if let navBar = navigationController?.navigationBar {
+            let appearance = UINavigationBarAppearance()
+            appearance.configureWithOpaqueBackground()
+            appearance.backgroundColor = backgroundColor
+            appearance.shadowColor = .clear
+            appearance.titleTextAttributes = [.foregroundColor: textColor]
+            appearance.largeTitleTextAttributes = [.foregroundColor: textColor]
+
+            navBar.standardAppearance = appearance
+            navBar.compactAppearance = appearance
+            navBar.scrollEdgeAppearance = appearance
+            if #available(iOS 15.0, *) {
+                navBar.compactScrollEdgeAppearance = appearance
+            }
+
+            navBar.backgroundColor = backgroundColor
+            navBar.barTintColor = backgroundColor
+            navBar.tintColor = textColor
+            navBar.titleTextAttributes = [.foregroundColor: textColor]
+            navBar.isTranslucent = false
+        }
+
+        updateButtonTintColors()
+    }
+
     override open var preferredStatusBarStyle: UIStatusBarStyle {
         return statusBarStyle
     }
@@ -615,7 +644,8 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
     }
 
     func updateButtonTintColors() {
-        let buttonTintColor = backgroundColor == .white ? UIColor.black : (tintColor ?? navigationController?.navigationBar.tintColor ?? .white)
+        let toolbarBackgroundColor = statusBarBackgroundView?.backgroundColor ?? navigationController?.navigationBar.backgroundColor ?? backgroundColor
+        let buttonTintColor = tintColor ?? (isDarkColor(toolbarBackgroundColor) ? UIColor.white : UIColor.black)
         backBarButtonItem.tintColor = buttonTintColor
         forwardBarButtonItem.tintColor = buttonTintColor
         reloadBarButtonItem.tintColor = buttonTintColor
@@ -649,16 +679,9 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
     override open func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            let isDarkMode = traitCollection.userInterfaceStyle == .dark
-            let textColor = isDarkMode ? UIColor.white : UIColor.black
-            if let navBar = navigationController?.navigationBar {
-                if navBar.backgroundColor == UIColor.black || navBar.backgroundColor == UIColor.white {
-                    navBar.backgroundColor = isDarkMode ? UIColor.black : UIColor.white
-                    navBar.tintColor = textColor
-                    navBar.titleTextAttributes = [.foregroundColor: textColor]
-                    updateButtonTintColors()
-                }
-            }
+            let toolbarBackgroundColor = statusBarBackgroundView?.backgroundColor ?? navigationController?.navigationBar.backgroundColor ?? backgroundColor
+            let toolbarTextColor = tintColor ?? (isDarkColor(toolbarBackgroundColor) ? UIColor.white : UIColor.black)
+            applyToolbarAppearance(backgroundColor: toolbarBackgroundColor, textColor: toolbarTextColor)
         }
     }
 
@@ -1261,8 +1284,8 @@ extension WKWebViewController {
         navigationController?.setNavigationBarHidden(false, animated: true)
         navigationController?.setToolbarHidden(true, animated: true)
         if tintColor == nil {
-            let isDarkMode = traitCollection.userInterfaceStyle == .dark
-            let textColor = isDarkMode ? UIColor.white : UIColor.black
+            let toolbarBackgroundColor = statusBarBackgroundView?.backgroundColor ?? navigationController?.navigationBar.backgroundColor ?? backgroundColor
+            let textColor = isDarkColor(toolbarBackgroundColor) ? UIColor.white : UIColor.black
             navigationController?.navigationBar.tintColor = textColor
             progressView?.progressTintColor = textColor
         } else {
@@ -1443,14 +1466,43 @@ extension WKWebViewController {
         capBrowserPlugin?.notifyListeners("closeEvent", data: ["url": currentUrl])
     }
 
+    private func isDarkColor(_ color: UIColor) -> Bool {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+
+        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return false
+        }
+
+        let luminance = (0.299 * red) + (0.587 * green) + (0.114 * blue)
+        return luminance < 0.5
+    }
+
     func setUpNavigationBarAppearance() {
         if let navBar = navigationController?.navigationBar {
-            navBar.setBackgroundImage(UIImage(), for: .default)
-            navBar.shadowImage = UIImage()
-            navBar.isTranslucent = true
-            let buttonTintColor = backgroundColor == .white ? UIColor.black : (tintColor ?? .white)
+            let toolbarBackgroundColor = statusBarBackgroundView?.backgroundColor ?? navBar.backgroundColor ?? backgroundColor
+            let buttonTintColor = tintColor ?? (isDarkColor(toolbarBackgroundColor) ? UIColor.white : UIColor.black)
+            let appearance = UINavigationBarAppearance()
+            appearance.configureWithOpaqueBackground()
+            appearance.backgroundColor = toolbarBackgroundColor
+            appearance.shadowColor = .clear
+            appearance.titleTextAttributes = [.foregroundColor: buttonTintColor]
+            appearance.largeTitleTextAttributes = [.foregroundColor: buttonTintColor]
+
+            navBar.standardAppearance = appearance
+            navBar.compactAppearance = appearance
+            navBar.scrollEdgeAppearance = appearance
+            if #available(iOS 15.0, *) {
+                navBar.compactScrollEdgeAppearance = appearance
+            }
+
+            navBar.backgroundColor = toolbarBackgroundColor
+            navBar.barTintColor = toolbarBackgroundColor
             navBar.tintColor = buttonTintColor
             navBar.titleTextAttributes = [NSAttributedString.Key.foregroundColor: buttonTintColor]
+            navBar.isTranslucent = false
             for item in navBar.items ?? [] {
                 let barButtons = (item.leftBarButtonItems ?? []) + (item.rightBarButtonItems ?? [])
                 disableLiquidGlassIfNeeded(for: barButtons)

@@ -526,9 +526,6 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
                 // If specific color provided, use it
                 let color = UIColor(hexString: toolbarColor)
 
-                // Apply to status bar and navigation bar area with a single colored view
-                webViewController.setupStatusBarBackground(color: color)
-
                 // Set status bar style based on toolbar color
                 let isDark = self.isDarkColor(color)
                 webViewController.statusBarStyle = isDark ? .lightContent : .darkContent
@@ -542,28 +539,20 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
                     textColor = isDark ? UIColor.white : UIColor.black
                 }
 
-                // Apply tint color to all UI elements without changing background
-                self.navigationWebViewController?.navigationBar.tintColor = textColor
-                webViewController.tintColor = textColor
-                self.navigationWebViewController?.navigationBar.titleTextAttributes = [NSAttributedString.Key.foregroundColor: textColor]
+                webViewController.applyToolbarAppearance(backgroundColor: color, textColor: textColor)
             } else {
-                // Use system appearance
-                let isDarkMode = UITraitCollection.current.userInterfaceStyle == .dark
-                let backgroundColor = isDarkMode ? UIColor.black : UIColor.white
+                // Default to a light toolbar appearance when no explicit toolbar color is provided
+                let backgroundColor = UIColor.white
                 let textColor: UIColor
 
                 if let toolbarTextColor = call.getString("toolbarTextColor"), self.isHexColorCode(toolbarTextColor) {
                     textColor = UIColor(hexString: toolbarTextColor)
                 } else {
-                    textColor = isDarkMode ? UIColor.white : UIColor.black
+                    textColor = UIColor.black
                 }
 
-                // Apply colors
-                webViewController.setupStatusBarBackground(color: backgroundColor)
-                webViewController.tintColor = textColor
-                self.navigationWebViewController?.navigationBar.tintColor = textColor
-                self.navigationWebViewController?.navigationBar.titleTextAttributes = [NSAttributedString.Key.foregroundColor: textColor]
-                webViewController.statusBarStyle = isDarkMode ? .lightContent : .darkContent
+                webViewController.applyToolbarAppearance(backgroundColor: backgroundColor, textColor: textColor)
+                webViewController.statusBarStyle = .darkContent
                 webViewController.updateStatusBarStyle()
             }
 
@@ -773,17 +762,11 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
             self.navigationWebViewController?.navigationBar.shadowImage = UIImage()
             self.navigationWebViewController?.navigationBar.setValue(true, forKey: "hidesShadow")
 
-            // Use system appearance
-            let isDarkMode = UITraitCollection.current.userInterfaceStyle == .dark
-            let backgroundColor = isDarkMode ? UIColor.black : UIColor.white
-            let textColor = isDarkMode ? UIColor.white : UIColor.black
+            let backgroundColor = UIColor.white
+            let textColor = UIColor.black
 
-            // Apply colors
-            webViewController.setupStatusBarBackground(color: backgroundColor)
-            webViewController.tintColor = textColor
-            self.navigationWebViewController?.navigationBar.tintColor = textColor
-            self.navigationWebViewController?.navigationBar.titleTextAttributes = [NSAttributedString.Key.foregroundColor: textColor]
-            webViewController.statusBarStyle = isDarkMode ? .lightContent : .darkContent
+            webViewController.applyToolbarAppearance(backgroundColor: backgroundColor, textColor: textColor)
+            webViewController.statusBarStyle = .darkContent
             webViewController.updateStatusBarStyle()
 
             // Always hide toolbar to ensure no bottom bar
