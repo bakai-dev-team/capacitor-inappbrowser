@@ -517,6 +517,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
     fileprivate var isTitleObserved = false
     fileprivate var isURLObserved = false
     fileprivate var isClosingView = false
+    fileprivate var pendingCloseCompletions: [((Bool) -> Void)] = []
 
     fileprivate lazy var backBarButtonItem: UIBarButtonItem = {
         let navBackImage = UIImage(systemName: "chevron.backward")?.withRenderingMode(.alwaysTemplate)
@@ -708,7 +709,6 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
             switch message.name {
             case "close":
                 print("[InAppBrowser] Processing close request")
-                self.cleanupWebView()
                 self.closeView()
 
             case "messageHandler":
@@ -1405,8 +1405,11 @@ extension WKWebViewController {
     public func closeView(completion: ((Bool) -> Void)?) {
         print("[InAppBrowser] Starting closeView")
 
+        if let completion = completion {
+            pendingCloseCompletions.append(completion)
+        }
+
         if isClosingView {
-            completion?(false)
             return
         }
 
@@ -1424,7 +1427,7 @@ extension WKWebViewController {
                 guard let self = self else { return }
                 let finishDismissal: () -> Void = { [weak self] in
                     self?.capBrowserPlugin?.cleanupPresentedBrowser()
-                    completion?(true)
+                    self?.finishPendingCloseRequests(didClose: true)
                 }
                 if let presentingViewController = self.presentingViewController {
                     print("[InAppBrowser] Dismissing from presenting view controller")
@@ -1439,7 +1442,15 @@ extension WKWebViewController {
             }
         } else {
             print("[InAppBrowser] Dismissal cancelled by delegate")
-            completion?(false)
+            finishPendingCloseRequests(didClose: false)
+        }
+    }
+
+    private func finishPendingCloseRequests(didClose: Bool) {
+        let completions = pendingCloseCompletions
+        pendingCloseCompletions.removeAll()
+        for completion in completions {
+            completion(didClose)
         }
     }
 
@@ -1520,7 +1531,18 @@ extension WKWebViewController {
             print("[InAppBrowser] WebView is already nil during cleanup")
             return
         }
+
+        loadingSpinner?.stopAnimating()
+        loadingSpinner?.removeFromSuperview()
+        loadingSpinner = nil
+        progressView?.removeFromSuperview()
+        progressView = nil
+
         webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        webView.scrollView.delegate = nil
+        webView.loadHTMLString("", baseURL: nil)
 
         removeWebViewObserversIfNeeded()
 
@@ -1536,12 +1558,26 @@ extension WKWebViewController {
         ucc.removeScriptMessageHandler(forName: "clipboardRead")
         ucc.removeScriptMessageHandler(forName: "vibrate")
 
+        navigationItem.leftBarButtonItems = []
+        navigationItem.rightBarButtonItems = []
+        source = nil
+        url = nil
+
+        if self.view === webView {
+            let placeholderView = UIView(frame: webView.frame)
+            placeholderView.backgroundColor = backgroundColor
+            self.view = placeholderView
+        }
+
+        webView.removeFromSuperview()
+
+        self.webView = nil
+
         WKWebsiteDataStore.default().removeData(
             ofTypes: [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache],
             modifiedSince: Date(timeIntervalSince1970: 0)
-        ) { [weak self] in
+        ) {
             print("[InAppBrowser] Cache cleared")
-            self?.webView = nil
         }
     }
 

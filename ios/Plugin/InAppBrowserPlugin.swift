@@ -80,6 +80,28 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
         self.navigationWebViewController = nil
     }
 
+    private func closeExistingBrowserIfNeeded(completion: @escaping () -> Void) {
+        if let webViewController = self.webViewController {
+            webViewController.closeView { _ in
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+            return
+        }
+
+        if let navigationController = self.navigationWebViewController {
+            navigationController.dismiss(animated: false) {
+                self.cleanupPresentedBrowser()
+                completion()
+            }
+            return
+        }
+
+        self.cleanupPresentedBrowser()
+        completion()
+    }
+
     @objc func clearAllCookies(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             let dataStore = WKWebsiteDataStore.default()
@@ -365,6 +387,7 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
         let permissions = call.getArray("permissions", []).compactMap { $0 as? String }
 
         DispatchQueue.main.async {
+            self.closeExistingBrowserIfNeeded {
             guard let url = URL(string: urlString) else {
                 call.reject("Invalid URL format")
                 return
@@ -626,6 +649,7 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
                 self.presentView(isAnimated: isAnimated)
             }
             call.resolve()
+            }
         }
     }
 
@@ -726,6 +750,7 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
         let credentials = self.readCredentials(call)
 
         DispatchQueue.main.async {
+            self.closeExistingBrowserIfNeeded {
             guard let url = URL(string: urlString) else {
                 call.reject("Invalid URL format")
                 return
@@ -778,6 +803,7 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
                 self.presentView()
             }
             call.resolve()
+            }
         }
     }
 
@@ -852,14 +878,6 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc public override func removeAllListeners(_ call: CAPPluginCall) {
         print("[InAppBrowser] Removing all listeners")
-        // Очищаем все слушатели
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            if let webViewController = self.webViewController {
-                webViewController.closeView()
-                self.webViewController = nil
-            }
-            call.resolve()
-        }
+        super.removeAllListeners(call)
     }
 }
