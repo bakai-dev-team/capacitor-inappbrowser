@@ -425,9 +425,31 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     }
 
 
+    private boolean isWebViewHandledScheme(String url) {
+        if (url == null) return true;
+
+        String scheme = Uri.parse(url).getScheme();
+        if (TextUtils.isEmpty(scheme)) return true;
+
+        String lowerScheme = scheme.toLowerCase();
+        return lowerScheme.equals("http") ||
+                lowerScheme.equals("https") ||
+                lowerScheme.equals("about") ||
+                lowerScheme.equals("data") ||
+                lowerScheme.equals("file") ||
+                lowerScheme.equals("javascript") ||
+                lowerScheme.equals("blob") ||
+                lowerScheme.equals("content");
+    }
+
+    private boolean isExternalScheme(String url) {
+        return !isWebViewHandledScheme(url);
+    }
+
     private boolean handleSpecialSchemes(Activity activity, WebView mainWebView, String url) {
         if (url == null) return false;
         final String lower = url.toLowerCase();
+        final boolean externalScheme = isExternalScheme(url);
 
         // 1) Встроенная логика закрытия — оставляем приоритетной
         if (url.contains("exit=true")) {
@@ -440,6 +462,10 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 });
             }
             return true;
+        }
+
+        if (_options != null && _options.getPreventDeeplink()) {
+            return externalScheme;
         }
 
         try {
@@ -505,6 +531,17 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 }
             }
 
+            if (externalScheme) {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    intent.addCategory(Intent.CATEGORY_BROWSABLE);
+                    activity.startActivity(intent);
+                } catch (ActivityNotFoundException e) {
+                    Log.w("InAppBrowser", "No application can handle URL: " + url, e);
+                }
+                return true;
+            }
+
             // HTTPS App Links / Deep Links — ТОЛЬКО user gesture
             if (lower.startsWith("https://") || lower.startsWith("http://")) {
                 try {
@@ -522,6 +559,10 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
 
         } catch (Exception e) {
             Log.e("InAppBrowser", "handleSpecialSchemes error: " + url, e);
+        }
+
+        if (externalScheme) {
+            return true;
         }
 
         // fallback — грузим в WebView
@@ -1332,11 +1373,10 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                             return false;
                         }
                         String url = request.getUrl().toString();
-                        // 🔥 КЛЮЧЕВОЕ УСЛОВИЕ
-                        // перехватываем ТОЛЬКО если:
-                        // 1) основной фрейм
-                        // 2) был пользовательский жест (клик)
-                        if (request.isForMainFrame() && request.hasGesture()) {
+                        // Перехватываем основной фрейм при пользовательском клике,
+                        // а внешние схемы всегда, чтобы WebView не показывал
+                        // ERR_UNKNOWN_URL_SCHEME для deeplink-ов вроде dgis://.
+                        if (request.isForMainFrame() && (request.hasGesture() || isExternalScheme(url))) {
                             return handleSpecialSchemes(activity, _webView, url);
                         }
                         // ❗ всё остальное — пусть WebView сам грузит
@@ -1351,7 +1391,8 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                         // Обрабатываем ТОЛЬКО явные схемы
                         if (url == null) return false;
                         String lower = url.toLowerCase();
-                        if (lower.startsWith("mailto:") || lower.startsWith("tel:") || lower.startsWith("tg:") ||
+                        if (isExternalScheme(url) ||
+                                lower.startsWith("mailto:") || lower.startsWith("tel:") || lower.startsWith("tg:") ||
                                 lower.startsWith("whatsapp:") ||
                                 lower.startsWith("intent://")) {
                             return handleSpecialSchemes(activity, _webView, url);
