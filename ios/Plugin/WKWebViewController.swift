@@ -518,6 +518,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
     fileprivate var isURLObserved = false
     fileprivate var isClosingView = false
     fileprivate var pendingCloseCompletions: [((Bool) -> Void)] = []
+    fileprivate var backSwipeSnapshot: UIView?
 
     fileprivate lazy var backBarButtonItem: UIBarButtonItem = {
         let navBackImage = UIImage(systemName: "chevron.backward")?.withRenderingMode(.alwaysTemplate)
@@ -925,7 +926,10 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
         webView.uiDelegate = self
         webView.navigationDelegate = self
 
-        webView.allowsBackForwardNavigationGestures = true
+        webView.allowsBackForwardNavigationGestures = false
+        let backSwipeGesture = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleBackSwipe(_:)))
+        backSwipeGesture.edges = .left
+        webView.addGestureRecognizer(backSwipeGesture)
         webView.isMultipleTouchEnabled = true
 
         webView.addObserver(self, forKeyPath: estimatedProgressKeyPath, options: .new, context: nil)
@@ -1092,7 +1096,11 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
                 self.navigationItem.title = webView?.url?.host
             }
         case "URL":
-            self.capBrowserPlugin?.notifyListeners("urlChangeEvent", data: ["url": webView?.url?.absoluteString ?? ""])
+            guard let urlString = webView?.url?.absoluteString,
+                  !urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return
+            }
+            self.capBrowserPlugin?.notifyListeners("urlChangeEvent", data: ["url": urlString])
         default:
             super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
         }
@@ -1348,6 +1356,60 @@ extension WKWebViewController {
         if webView?.canGoBack ?? false { webView?.goBack() }
     }
     @objc func forwardDidClick(sender: AnyObject) { webView?.goForward() }
+
+    @objc private func handleBackSwipe(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        guard let webView = webView else { return }
+        let translation = max(0, gesture.translation(in: webView).x)
+
+        switch gesture.state {
+        case .began:
+            guard webView.canGoBack,
+                  let snapshot = webView.snapshotView(afterScreenUpdates: false) else {
+                gesture.isEnabled = false
+                gesture.isEnabled = true
+                return
+            }
+            snapshot.frame = webView.bounds
+            snapshot.isUserInteractionEnabled = false
+            snapshot.layer.shadowColor = UIColor.black.cgColor
+            snapshot.layer.shadowOpacity = 0.2
+            snapshot.layer.shadowRadius = 8
+            snapshot.layer.shadowOffset = CGSize(width: -3, height: 0)
+            webView.addSubview(snapshot)
+            backSwipeSnapshot = snapshot
+            webView.goBack()
+        case .changed:
+            backSwipeSnapshot?.transform = CGAffineTransform(translationX: translation, y: 0)
+        case .ended:
+            let velocity = gesture.velocity(in: webView).x
+            finishBackSwipe(commit: translation > webView.bounds.width * 0.35 || velocity > 500)
+        case .cancelled, .failed:
+            finishBackSwipe(commit: false)
+        default:
+            break
+        }
+    }
+
+    private func finishBackSwipe(commit: Bool) {
+        guard let webView = webView, let snapshot = backSwipeSnapshot else { return }
+        backSwipeSnapshot = nil
+
+        if !commit, webView.canGoForward {
+            webView.goForward()
+        }
+
+        UIView.animate(
+            withDuration: 0.22,
+            delay: 0,
+            options: [.curveEaseOut, .beginFromCurrentState],
+            animations: {
+                snapshot.transform = commit
+                    ? CGAffineTransform(translationX: webView.bounds.width, y: 0)
+                    : .identity
+            },
+            completion: { _ in snapshot.removeFromSuperview() }
+        )
+    }
     @objc func buttonNearDoneDidClick(sender: AnyObject) { self.capBrowserPlugin?.notifyListeners("buttonNearDoneClick", data: [:]) }
 
     @objc func reloadDidClick(sender: AnyObject) {
@@ -1537,6 +1599,8 @@ extension WKWebViewController {
         loadingSpinner = nil
         progressView?.removeFromSuperview()
         progressView = nil
+        backSwipeSnapshot?.removeFromSuperview()
+        backSwipeSnapshot = nil
 
         webView.stopLoading()
         webView.navigationDelegate = nil

@@ -144,8 +144,6 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     public static final int FILE_CHOOSER_REQUEST_CODE = 1000;
     public ValueCallback<Uri> mUploadMessage;
     public ValueCallback<Uri[]> mFilePathCallback;
-    private android.view.GestureDetector gestureDetector;
-
     // Temporary URI for storing camera capture
     public Uri tempCameraUri;
 

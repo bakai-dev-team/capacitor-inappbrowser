@@ -182,11 +182,12 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         self.currentPluginCall = call
 
-        guard let urlString = call.getString("url") else {
+        guard let rawUrlString = call.getString("url") else {
             call.reject("Must provide a URL to open")
             return
         }
 
+        let urlString = rawUrlString.trimmingCharacters(in: .whitespacesAndNewlines)
         if urlString.isEmpty {
             call.reject("URL must not be empty")
             return
@@ -659,8 +660,14 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func setUrl(_ call: CAPPluginCall) {
-        guard let urlString = call.getString("url") else {
+        guard let rawUrlString = call.getString("url") else {
             call.reject("Cannot get new url to set")
+            return
+        }
+
+        let urlString = rawUrlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !urlString.isEmpty else {
+            call.reject("URL must not be empty")
             return
         }
 
@@ -726,11 +733,12 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 
         self.currentPluginCall = call
 
-        guard let urlString = call.getString("url") else {
+        guard let rawUrlString = call.getString("url") else {
             call.reject("Must provide a URL to open")
             return
         }
 
+        let urlString = rawUrlString.trimmingCharacters(in: .whitespacesAndNewlines)
         if urlString.isEmpty {
             call.reject("URL must not be empty")
             return
