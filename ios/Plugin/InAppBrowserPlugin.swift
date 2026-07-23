@@ -52,6 +52,29 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
     private var closeModalOk: String?
     private var closeModalCancel: String?
 
+    private func validatedWebURL(from call: CAPPluginCall) -> URL? {
+        guard let rawURL = call.getString("url") else {
+            call.reject("Must provide a URL to open")
+            return nil
+        }
+
+        let value = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
+            call.reject("URL must not be empty")
+            return nil
+        }
+
+        guard let url = URL(string: value),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host?.isEmpty == false else {
+            call.reject("URL must be an absolute HTTP(S) URL")
+            return nil
+        }
+
+        return url
+    }
+
     private func setup() {
         self.isSetupDone = true
 
@@ -182,14 +205,7 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         self.currentPluginCall = call
 
-        guard let rawUrlString = call.getString("url") else {
-            call.reject("Must provide a URL to open")
-            return
-        }
-
-        let urlString = rawUrlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        if urlString.isEmpty {
-            call.reject("URL must not be empty")
+        guard let url = validatedWebURL(from: call) else {
             return
         }
 
@@ -389,11 +405,6 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 
         DispatchQueue.main.async {
             self.closeExistingBrowserIfNeeded {
-            guard let url = URL(string: urlString) else {
-                call.reject("Invalid URL format")
-                return
-            }
-
             self.webViewController = WKWebViewController.init(url: url, headers: headers, isInspectable: isInspectable, credentials: credentials, preventDeeplink: preventDeeplink, blankNavigationTab: toolbarType == "blank", permissions: permissions, backgroundColor: backgroundColor)
 
             guard let webViewController = self.webViewController else {
@@ -646,7 +657,9 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
             // We don't use the toolbar anymore, always hide it
             self.navigationWebViewController?.setToolbarHidden(true, animated: false)
 
-            if !self.isPresentAfterPageLoad {
+            if self.isPresentAfterPageLoad {
+                webViewController.startInitialLoadIfNeeded()
+            } else {
                 self.presentView(isAnimated: isAnimated)
             }
             call.resolve()
@@ -660,23 +673,11 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func setUrl(_ call: CAPPluginCall) {
-        guard let rawUrlString = call.getString("url") else {
-            call.reject("Cannot get new url to set")
+        guard let url = validatedWebURL(from: call) else {
             return
         }
 
-        let urlString = rawUrlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !urlString.isEmpty else {
-            call.reject("URL must not be empty")
-            return
-        }
-
-        guard let url = URL(string: urlString) else {
-            call.reject("Invalid URL")
-            return
-        }
-
-        self.webViewController?.load(remote: url)
+        self.webViewController?.setRemoteURL(url)
         call.resolve()
     }
 
@@ -733,20 +734,12 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 
         self.currentPluginCall = call
 
-        guard let rawUrlString = call.getString("url") else {
-            call.reject("Must provide a URL to open")
-            return
-        }
-
-        let urlString = rawUrlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        if urlString.isEmpty {
-            call.reject("URL must not be empty")
+        guard let url = validatedWebURL(from: call) else {
             return
         }
 
         // Добавляем обработку URL с параметром exit
-        if let url = URL(string: urlString),
-           let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
            let queryItems = components.queryItems,
            queryItems.contains(where: { $0.name == "exit" && $0.value == "true" }) {
             print("[InAppBrowser] Exit parameter detected in URL")
@@ -759,11 +752,6 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 
         DispatchQueue.main.async {
             self.closeExistingBrowserIfNeeded {
-            guard let url = URL(string: urlString) else {
-                call.reject("Invalid URL format")
-                return
-            }
-
             self.webViewController = WKWebViewController.init(url: url, headers: headers, isInspectable: isInspectable, credentials: credentials, preventDeeplink: preventDeeplink, blankNavigationTab: true)
 
             guard let webViewController = self.webViewController else {
@@ -807,7 +795,9 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 
             self.navigationWebViewController?.modalPresentationStyle = .fullScreen
 
-            if !self.isPresentAfterPageLoad {
+            if self.isPresentAfterPageLoad {
+                webViewController.startInitialLoadIfNeeded()
+            } else {
                 self.presentView()
             }
             call.resolve()
@@ -859,6 +849,7 @@ public class InAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func appDidBecomeActive(_ notification: NSNotification) {
         self.hidePrivacyScreen()
+        self.webViewController?.recoverAfterAppActivation()
         self.webViewController?.resumePendingPermissionFlowIfNeeded()
     }
 

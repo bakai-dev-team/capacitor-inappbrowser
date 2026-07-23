@@ -519,6 +519,10 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
     fileprivate var isClosingView = false
     fileprivate var pendingCloseCompletions: [((Bool) -> Void)] = []
     fileprivate var backSwipeSnapshot: UIView?
+    fileprivate var webContentProcessDidTerminate = false
+    fileprivate var isInitializingWebView = false
+    fileprivate var initialLoadStarted = false
+    fileprivate var blankPageRecoveryAttempts = 0
 
     fileprivate lazy var backBarButtonItem: UIBarButtonItem = {
         let navBackImage = UIImage(systemName: "chevron.backward")?.withRenderingMode(.alwaysTemplate)
@@ -795,6 +799,10 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
     }
 
     open func initWebview(isInspectable: Bool = true) {
+        guard webView == nil, !isInitializingWebView else { return }
+        isInitializingWebView = true
+        defer { isInitializingWebView = false }
+
         self.view.backgroundColor = backgroundColor
         self.extendedLayoutIncludesOpaqueBars = true
         self.edgesForExtendedLayout = [.bottom]
@@ -965,7 +973,6 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
             self.previousToolbarState = (navigation.toolbar.tintColor, navigation.toolbar.isHidden)
         }
 
-        if let s = self.source { self.load(source: s) }
     }
 
     open func setupViewElements() {
@@ -1041,6 +1048,7 @@ open class WKWebViewController: UIViewController, WKScriptMessageHandler, CLLoca
 
     override open func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        startInitialLoadIfNeeded()
         startPermissionFlowIfPossible()
 
         if buttonNearDoneIcon != nil {
@@ -1121,9 +1129,33 @@ public extension WKWebViewController {
         }
     }
 
+    func startInitialLoadIfNeeded() {
+        guard !initialLoadStarted, let source = source else { return }
+        initialLoadStarted = true
+        print("[InAppBrowser] Starting initial load after WebView attachment")
+        load(source: source)
+    }
+
+    func setRemoteURL(_ url: URL) {
+        source = .remote(url)
+        initialLoadStarted = true
+        load(remote: url)
+    }
+
     func load(remote: URL) {
-        DispatchQueue.main.async {
-            self.webView?.load(self.createRequest(url: remote))
+        let performLoad = { [weak self] in
+            guard let self = self, let webView = self.webView else {
+                print("[InAppBrowser] Cannot load \(remote.absoluteString): WKWebView is not initialized")
+                return
+            }
+            print("[InAppBrowser] Loading URL: \(remote.absoluteString)")
+            webView.load(self.createRequest(url: remote))
+        }
+
+        if Thread.isMainThread {
+            performLoad()
+        } else {
+            DispatchQueue.main.async(execute: performLoad)
         }
     }
 
@@ -1141,7 +1173,18 @@ public extension WKWebViewController {
         }
     }
     func reload() {
-        webView?.reload()
+        if initialLoadStarted {
+            webView?.reload()
+        } else {
+            startInitialLoadIfNeeded()
+        }
+    }
+
+    func recoverAfterAppActivation() {
+        let currentURL = webView?.url
+        let hasBlankMainFrame = initialLoadStarted && (currentURL == nil || currentURL?.absoluteString == "about:blank")
+        guard webContentProcessDidTerminate || hasBlankMainFrame else { return }
+        reloadAfterWebContentProcessTermination()
     }
 
     func executeScript(script: String, completion: ((Any?, Error?) -> Void)? = nil) {
@@ -1179,6 +1222,14 @@ extension WKWebViewController {
             request.addValue(value, forHTTPHeaderField: cookieKey)
         }
         return request
+    }
+
+    private func reloadAfterWebContentProcessTermination() {
+        guard let source = source else { return }
+        webContentProcessDidTerminate = false
+        initialLoadStarted = true
+        print("[InAppBrowser] Reloading after Web Content process termination")
+        load(source: source)
     }
 
     func setUpProgressView() {
@@ -1606,8 +1657,6 @@ extension WKWebViewController {
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         webView.scrollView.delegate = nil
-        webView.loadHTMLString("", baseURL: nil)
-
         removeWebViewObserversIfNeeded()
 
         // Снимаем все user scripts и handlers, включая добавленные для Clipboard/Vibrate
@@ -1637,12 +1686,6 @@ extension WKWebViewController {
 
         self.webView = nil
 
-        WKWebsiteDataStore.default().removeData(
-            ofTypes: [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache],
-            modifiedSince: Date(timeIntervalSince1970: 0)
-        ) {
-            print("[InAppBrowser] Cache cleared")
-        }
     }
 
     private func removeWebViewObserversIfNeeded() {
@@ -1694,6 +1737,15 @@ extension WKWebViewController: WKUIDelegate {
 
 // MARK: - WKNavigationDelegate
 extension WKWebViewController: WKNavigationDelegate {
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        webContentProcessDidTerminate = true
+        print("[InAppBrowser] Web Content process terminated")
+
+        if UIApplication.shared.applicationState == .active {
+            reloadAfterWebContentProcessTermination()
+        }
+    }
+
     internal func injectPreShowScript() {
         if preShowSemaphore != nil { return }
         let script = """
@@ -1731,6 +1783,19 @@ extension WKWebViewController: WKNavigationDelegate {
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loadingSpinner?.stopAnimating()
+
+        if webView.url?.absoluteString == "about:blank",
+           source?.remoteURL != nil,
+           blankPageRecoveryAttempts < 1 {
+            blankPageRecoveryAttempts += 1
+            print("[InAppBrowser] Main frame finished at about:blank; restoring requested URL")
+            reloadAfterWebContentProcessTermination()
+            return
+        }
+
+        if webView.url?.absoluteString != "about:blank" {
+            blankPageRecoveryAttempts = 0
+        }
 
         if !didpageInit && self.capBrowserPlugin?.isPresentAfterPageLoad == true {
             if self.preShowScript != nil && !self.preShowScript!.isEmpty {
