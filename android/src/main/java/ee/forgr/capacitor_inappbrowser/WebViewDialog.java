@@ -444,6 +444,24 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         return !isWebViewHandledScheme(url);
     }
 
+    private boolean isInternalHttpUrl(String url) {
+        if (_options == null || TextUtils.isEmpty(_options.getUrl()) || TextUtils.isEmpty(url)) {
+            return false;
+        }
+
+        Uri initialUri = Uri.parse(_options.getUrl());
+        Uri targetUri = Uri.parse(url);
+        String targetScheme = targetUri.getScheme();
+
+        if (!("http".equalsIgnoreCase(targetScheme) || "https".equalsIgnoreCase(targetScheme))) {
+            return false;
+        }
+
+        return initialUri.getHost() != null &&
+                targetUri.getHost() != null &&
+                initialUri.getHost().equalsIgnoreCase(targetUri.getHost());
+    }
+
     private boolean handleSpecialSchemes(Activity activity, WebView mainWebView, String url) {
         if (url == null) return false;
         final String lower = url.toLowerCase();
@@ -540,19 +558,17 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 return true;
             }
 
-            // HTTPS App Links / Deep Links — ТОЛЬКО user gesture
+            // Ссылки на исходный host остаются внутри WebView. Остальные HTTP(S)
+            // ссылки передаём Android, чтобы открыть их во внешнем браузере.
             if (lower.startsWith("https://") || lower.startsWith("http://")) {
-                try {
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                    intent.addCategory(Intent.CATEGORY_BROWSABLE);
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-                    activity.startActivity(intent);
-                    return true;
-                } catch (Exception e) {
-                    mainWebView.loadUrl(url);
-                    return true;
+                if (isInternalHttpUrl(url)) {
+                    return false;
                 }
+
+                Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                intent.addCategory(Intent.CATEGORY_BROWSABLE);
+                activity.startActivity(intent);
+                return true;
             }
 
         } catch (Exception e) {
@@ -1371,10 +1387,9 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                             return false;
                         }
                         String url = request.getUrl().toString();
-                        // Перехватываем основной фрейм при пользовательском клике,
-                        // а внешние схемы всегда, чтобы WebView не показывал
-                        // ERR_UNKNOWN_URL_SCHEME для deeplink-ов вроде dgis://.
-                        if (request.isForMainFrame() && (request.hasGesture() || isExternalScheme(url))) {
+                        // Проверяем любую навигацию основного фрейма, включая
+                        // переходы, инициированные JavaScript/SPA router-ом.
+                        if (request.isForMainFrame()) {
                             return handleSpecialSchemes(activity, _webView, url);
                         }
                         // ❗ всё остальное — пусть WebView сам грузит
