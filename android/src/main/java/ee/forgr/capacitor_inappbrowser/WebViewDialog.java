@@ -88,6 +88,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -444,6 +445,18 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         return !isWebViewHandledScheme(url);
     }
 
+    private boolean isExternalDocumentUrl(String url) {
+        if (TextUtils.isEmpty(url)) return false;
+
+        String path = Uri.parse(url).getPath();
+        if (path == null) return false;
+
+        String lowerPath = path.toLowerCase(Locale.ROOT);
+        return lowerPath.endsWith(".pdf") ||
+                lowerPath.endsWith(".docx") ||
+                lowerPath.endsWith(".xlsx");
+    }
+
     private boolean isInternalHttpUrl(String url) {
         if (_options == null || TextUtils.isEmpty(_options.getUrl()) || TextUtils.isEmpty(url)) {
             return false;
@@ -555,6 +568,13 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                 } catch (ActivityNotFoundException e) {
                     Log.w("InAppBrowser", "No application can handle URL: " + url, e);
                 }
+                return true;
+            }
+
+            if (isExternalDocumentUrl(url)) {
+                Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                intent.addCategory(Intent.CATEGORY_BROWSABLE);
+                activity.startActivity(intent);
                 return true;
             }
 
@@ -1404,7 +1424,7 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
                         // Обрабатываем ТОЛЬКО явные схемы
                         if (url == null) return false;
                         String lower = url.toLowerCase();
-                        if (isExternalScheme(url) ||
+                        if (isExternalScheme(url) || isExternalDocumentUrl(url) ||
                                 lower.startsWith("mailto:") || lower.startsWith("tel:") || lower.startsWith("tg:") ||
                                 lower.startsWith("whatsapp:") ||
                                 lower.startsWith("intent://")) {
