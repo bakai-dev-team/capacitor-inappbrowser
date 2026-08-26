@@ -169,6 +169,10 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
             if (activity != null) {
                 activity.runOnUiThread(() -> {
                     Log.d("WebViewDialog", "Close method called from JavaScript");
+                    String currentUrl = _webView != null ? _webView.getUrl() : "";
+                    if (_options != null && _options.getCallbacks() != null) {
+                        _options.getCallbacks().closeEvent(currentUrl);
+                    }
                     dismiss();
                 });
             }
