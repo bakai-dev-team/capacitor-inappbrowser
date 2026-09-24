@@ -5,6 +5,12 @@
         <category android:name="android.intent.category.BROWSABLE" />
         <data android:scheme="http" />
       </intent>
+      <intent>
+        <action android:name="android.media.action.IMAGE_CAPTURE" />
+      </intent>
+      <intent>
+        <action android:name="android.media.action.VIDEO_CAPTURE" />
+      </intent>
     </queries>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>

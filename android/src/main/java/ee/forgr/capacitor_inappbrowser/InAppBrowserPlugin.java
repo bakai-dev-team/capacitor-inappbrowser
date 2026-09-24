@@ -74,6 +74,7 @@ public class InAppBrowserPlugin
 
   private ActivityResultLauncher<Intent> fileChooserLauncher;
   private ActivityResultLauncher<Intent> cameraLauncher;
+  private ActivityResultLauncher<String> cameraPermissionLauncher;
 
   @Override
   public void load() {
@@ -96,6 +97,15 @@ public class InAppBrowserPlugin
         result -> {
           if (webViewDialog != null) {
             webViewDialog.handleCameraResult(result);
+          }
+        }
+      );
+
+      cameraPermissionLauncher = activity.registerForActivityResult(
+        new ActivityResultContracts.RequestPermission(),
+        granted -> {
+          if (webViewDialog != null) {
+            webViewDialog.handleCapturePermissionResult(granted);
           }
         }
       );
@@ -787,6 +797,7 @@ public class InAppBrowserPlugin
               cameraLauncher
             );
             webViewDialog.activity = InAppBrowserPlugin.this.getActivity();
+            webViewDialog.cameraPermissionLauncher = cameraPermissionLauncher;
             webViewDialog.presentWebView();
           }
         }

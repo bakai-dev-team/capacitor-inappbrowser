@@ -147,6 +147,10 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     public ValueCallback<Uri[]> mFilePathCallback;
     // Temporary URI for storing camera capture
     public Uri tempCameraUri;
+    // Отложенный запуск камеры до получения разрешения CAMERA
+    public ActivityResultLauncher<String> cameraPermissionLauncher;
+    private String pendingCaptureAction;
+    private String pendingCaptureExtension;
 
     private final PermissionHandler permissionHandler;
 
@@ -1312,8 +1316,14 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
     public void handleCameraResult(ActivityResult result) {
         if (mFilePathCallback != null) {
             Uri[] results = null;
-            if (result.getResultCode() == Activity.RESULT_OK && tempCameraUri != null) {
-                results = new Uri[]{tempCameraUri};
+            if (result.getResultCode() == Activity.RESULT_OK) {
+                // Некоторые камеры игнорируют EXTRA_OUTPUT для видео и возвращают свой URI
+                Intent data = result.getData();
+                if (data != null && data.getData() != null) {
+                    results = new Uri[]{data.getData()};
+                } else if (tempCameraUri != null) {
+                    results = new Uri[]{tempCameraUri};
+                }
             }
             mFilePathCallback.onReceiveValue(results);
             mFilePathCallback = null;
@@ -1773,9 +1783,9 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
      *
      * @return URI for the temporary file or null if creation failed
      */
-    private Uri createTempImageUri() {
+    private Uri createTempCaptureUri(String extension) {
         try {
-            String fileName = "capture_" + System.currentTimeMillis() + ".jpg";
+            String fileName = "capture_" + System.currentTimeMillis() + extension;
             java.io.File cacheDir = _context.getCacheDir();
 
             // Make sure cache directory exists
@@ -1969,77 +1979,115 @@ public class WebViewDialog extends Dialog implements ActivityCompat.OnRequestPer
         /// //
         @Override
         public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+            // Отменяем предыдущий незавершённый выбор, иначе WebView больше не откроет выбор файла
+            if (mFilePathCallback != null) {
+                mFilePathCallback.onReceiveValue(null);
+            }
             mFilePathCallback = filePathCallback;
 
-            // Check if this is a camera capture request
+            boolean wantsVideo = false;
+            boolean wantsImage = false;
             String[] acceptTypes = fileChooserParams.getAcceptTypes();
-            boolean isCameraCapture = false;
-
-            // Check for capture="camera" attribute
-            if (fileChooserParams.getMode() == FileChooserParams.MODE_OPEN) {
-                // Check if it's specifically a camera capture request
-                if (acceptTypes != null && acceptTypes.length > 0) {
-                    for (String acceptType : acceptTypes) {
-                        // If it's a video capture, it's definitely a camera request
-                        if (acceptType.contains("video/*")) {
-                            isCameraCapture = true;
-                            break;
-                        }
-                        // For images, only use camera if explicitly requested
-                        if (acceptType.contains("image/*") && fileChooserParams.isCaptureEnabled()) {
-                            isCameraCapture = true;
-                            break;
-                        }
+            if (acceptTypes != null) {
+                for (String acceptType : acceptTypes) {
+                    if (acceptType == null) continue;
+                    for (String type : acceptType.split(",")) {
+                        type = type.trim().toLowerCase();
+                        if (type.startsWith("video/")) wantsVideo = true;
+                        if (type.startsWith("image/")) wantsImage = true;
                     }
                 }
             }
 
-            if (isCameraCapture) {
-                // Handle camera capture
-                try {
-                    // Create a temporary file to store the camera capture
-                    tempCameraUri = createTempImageUri();
-                    if (tempCameraUri != null) {
-                        Intent cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-                        cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, tempCameraUri);
-                        cameraIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            // Камеру открываем только для <input capture>, иначе — галерея/файлы с нужным MIME-типом
+            if (fileChooserParams.isCaptureEnabled() && (wantsVideo || wantsImage)) {
+                if (wantsVideo) {
+                    requestCapture(MediaStore.ACTION_VIDEO_CAPTURE, ".mp4");
+                } else {
+                    requestCapture(MediaStore.ACTION_IMAGE_CAPTURE, ".jpg");
+                }
+                return true;
+            }
 
-                        // Check if there's a camera app available
-                        if (cameraIntent.resolveActivity(activity.getPackageManager()) != null) {
-                            cameraLauncher.launch(cameraIntent);
-                        } else {
-                            Toast.makeText(activity, "No camera app found", Toast.LENGTH_LONG).show();
-                            mFilePathCallback = null;
-                            return false;
-                        }
-                    } else {
-                        Toast.makeText(activity, "Cannot create temporary file for camera capture", Toast.LENGTH_LONG).show();
-                        mFilePathCallback = null;
-                        return false;
-                    }
-                } catch (Exception e) {
-                    mFilePathCallback = null;
-                    Toast.makeText(activity, "Error opening camera: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                    return false;
+            try {
+                Intent intent = fileChooserParams.createIntent();
+                if (intent.resolveActivity(activity.getPackageManager()) != null) {
+                    fileChooserLauncher.launch(intent);
+                } else {
+                    Toast.makeText(activity, "No file chooser app found", Toast.LENGTH_LONG).show();
+                    cancelFileChooser();
                 }
-            } else {
-                // Handle regular file selection
-                try {
-                    Intent intent = fileChooserParams.createIntent();
-                    if (intent.resolveActivity(activity.getPackageManager()) != null) {
-                        fileChooserLauncher.launch(intent);
-                    } else {
-                        Toast.makeText(activity, "No file chooser app found", Toast.LENGTH_LONG).show();
-                        mFilePathCallback = null;
-                        return false;
-                    }
-                } catch (Exception e) {
-                    mFilePathCallback = null;
-                    Toast.makeText(activity, "Error opening file chooser: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                    return false;
-                }
+            } catch (Exception e) {
+                Toast.makeText(activity, "Error opening file chooser: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                cancelFileChooser();
             }
             return true;
+        }
+    }
+
+    private void cancelFileChooser() {
+        if (mFilePathCallback != null) {
+            mFilePathCallback.onReceiveValue(null);
+            mFilePathCallback = null;
+        }
+        tempCameraUri = null;
+        pendingCaptureAction = null;
+        pendingCaptureExtension = null;
+    }
+
+    /**
+     * Запускает камеру, предварительно запросив разрешение CAMERA:
+     * если оно объявлено в манифесте, но не выдано, ACTION_*_CAPTURE падает с SecurityException.
+     */
+    private void requestCapture(String action, String extension) {
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            launchCapture(action, extension);
+        } else if (cameraPermissionLauncher != null) {
+            pendingCaptureAction = action;
+            pendingCaptureExtension = extension;
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
+        } else {
+            Toast.makeText(activity, "Camera permission is required", Toast.LENGTH_LONG).show();
+            cancelFileChooser();
+        }
+    }
+
+    public void handleCapturePermissionResult(boolean granted) {
+        String action = pendingCaptureAction;
+        String extension = pendingCaptureExtension;
+        pendingCaptureAction = null;
+        pendingCaptureExtension = null;
+        if (granted && action != null && mFilePathCallback != null) {
+            launchCapture(action, extension);
+        } else {
+            if (!granted) {
+                Toast.makeText(activity, "Camera permission is required", Toast.LENGTH_LONG).show();
+            }
+            cancelFileChooser();
+        }
+    }
+
+    private void launchCapture(String action, String extension) {
+        try {
+            tempCameraUri = createTempCaptureUri(extension);
+            if (tempCameraUri == null) {
+                Toast.makeText(activity, "Cannot create temporary file for camera capture", Toast.LENGTH_LONG).show();
+                cancelFileChooser();
+                return;
+            }
+            Intent cameraIntent = new Intent(action);
+            cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, tempCameraUri);
+            cameraIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+
+            if (cameraIntent.resolveActivity(activity.getPackageManager()) != null) {
+                cameraLauncher.launch(cameraIntent);
+            } else {
+                Toast.makeText(activity, "No camera app found", Toast.LENGTH_LONG).show();
+                cancelFileChooser();
+            }
+        } catch (Exception e) {
+            Toast.makeText(activity, "Error opening camera: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            cancelFileChooser();
         }
     }
 
