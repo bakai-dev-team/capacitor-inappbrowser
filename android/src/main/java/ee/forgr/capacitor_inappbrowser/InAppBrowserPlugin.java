@@ -74,6 +74,9 @@ public class InAppBrowserPlugin
 
   private ActivityResultLauncher<Intent> fileChooserLauncher;
   private ActivityResultLauncher<Intent> cameraLauncher;
+  private ActivityResultLauncher<String> capturePermissionLauncher;
+  private Runnable pendingCaptureGranted;
+  private Runnable pendingCaptureDenied;
 
   @Override
   public void load() {
@@ -96,6 +99,18 @@ public class InAppBrowserPlugin
         result -> {
           if (webViewDialog != null) {
             webViewDialog.handleCameraResult(result);
+          }
+        }
+      );
+
+      capturePermissionLauncher = activity.registerForActivityResult(
+        new ActivityResultContracts.RequestPermission(),
+        granted -> {
+          Runnable callback = granted ? pendingCaptureGranted : pendingCaptureDenied;
+          pendingCaptureGranted = null;
+          pendingCaptureDenied = null;
+          if (callback != null) {
+            callback.run();
           }
         }
       );
@@ -221,6 +236,26 @@ public class InAppBrowserPlugin
       );
       currentPermissionRequest = null;
     }
+  }
+
+  @Override
+  public void requestCapturePermission(Runnable onGranted, Runnable onDenied) {
+    Activity activity = getActivity();
+    if (
+      activity == null ||
+      ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) ==
+      PackageManager.PERMISSION_GRANTED
+    ) {
+      onGranted.run();
+      return;
+    }
+    if (capturePermissionLauncher == null) {
+      onDenied.run();
+      return;
+    }
+    pendingCaptureGranted = onGranted;
+    pendingCaptureDenied = onDenied;
+    capturePermissionLauncher.launch(Manifest.permission.CAMERA);
   }
 
   @Override

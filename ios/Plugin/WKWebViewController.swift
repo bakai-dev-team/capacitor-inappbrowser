@@ -1718,19 +1718,27 @@ extension WKWebViewController: WKUIDelegate {
 
     @available(iOS 15.0, *)
     public func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (Bool) -> Void) {
-        if type == .camera {
-            DispatchQueue.main.async {
-                let alertController = UIAlertController(
-                    title: "Доступ к камере",
-                    message: "Приложению требуется доступ к камере. Разрешить?",
-                    preferredStyle: .alert
-                )
-                alertController.addAction(UIAlertAction(title: "Разрешить", style: .default) { _ in decisionHandler(true) })
-                alertController.addAction(UIAlertAction(title: "Отмена", style: .cancel) { _ in decisionHandler(false) })
-                self.present(alertController, animated: true)
-            }
-        } else {
+        let title: String
+        let message: String
+        switch type {
+        case .camera:
+            title = "Доступ к камере"
+            message = "Приложению требуется доступ к камере. Разрешить?"
+        case .microphone:
+            title = "Доступ к микрофону"
+            message = "Приложению требуется доступ к микрофону. Разрешить?"
+        case .cameraAndMicrophone:
+            title = "Доступ к камере и микрофону"
+            message = "Приложению требуется доступ к камере и микрофону для записи видео. Разрешить?"
+        @unknown default:
             decisionHandler(false)
+            return
+        }
+        DispatchQueue.main.async {
+            let alertController = UIAlertController(title: title, message: message, preferredStyle: .alert)
+            alertController.addAction(UIAlertAction(title: "Разрешить", style: .default) { _ in decisionHandler(true) })
+            alertController.addAction(UIAlertAction(title: "Отмена", style: .cancel) { _ in decisionHandler(false) })
+            self.present(alertController, animated: true)
         }
     }
 }
